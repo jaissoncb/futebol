@@ -1,0 +1,140 @@
+name: Futebol CI and Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact main SHA to release (40 hexadecimal characters)
+        required: true
+        type: string
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      release_allowed: ${{ steps.guard.outputs.release_allowed }}
+      build_artifact_id: ${{ steps.build_artifact.outputs.artifact-id }}
+      content_digest: ${{ steps.artifact_validation.outputs.content_digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate release request
+        id: guard
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: node scripts/release-guard.mjs
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Test bundle and workflow security
+        run: |
+          pnpm test:bundle-security
+          pnpm test:workflow
+
+      - name: Build and verify Futebol
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: pnpm build
+
+      - name: Validate public Pages artifact
+        id: artifact_validation
+        run: pnpm verify:artifact
+
+      - name: Upload validated build
+        id: build_artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: futebol-pages-build
+          path: dist
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  package:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.expected_sha == github.sha &&
+      needs.build.outputs.release_allowed == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release scripts
+        uses: actions/checkout@v6
+
+      - name: Download exact validated build from this run
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.build_artifact_id }}
+          merge-multiple: true
+          path: dist
+
+      - name: Revalidate artifact digest and public contents
+        env:
+          EXPECTED_CONTENT_DIGEST: ${{ needs.build.outputs.content_digest }}
+        run: node scripts/verify-pages-artifact.mjs dist
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the single Pages artifact
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          name: github-pages
+          path: dist
+          include-hidden-files: true
+          retention-days: 30
+
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.expected_sha == github.sha &&
+      needs.package.result == 'success'
+    needs: package
+    runs-on: ubuntu-latest
+    concurrency:
+      group: futebol-pages-deployment
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

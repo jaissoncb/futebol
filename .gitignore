@@ -1,0 +1,27 @@
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+*.log
+
+# Local environment files; retain the public template
+.env
+.env.*
+!.env.example
+
+# Local tools and Codex instructions
+.local-backup/
+.repo-sync/
+.tools/
+AGENTS.override.md
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/

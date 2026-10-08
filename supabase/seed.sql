@@ -1,0 +1,2 @@
+-- Intencionalmente vazio na Fase 2A.
+-- Dados de teste são criados e revertidos pelos testes pgTAP.

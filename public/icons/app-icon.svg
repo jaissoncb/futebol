@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Futebol</title>
+  <rect width="512" height="512" rx="112" fill="#075b45"/>
+  <circle cx="256" cy="256" r="154" fill="#fff"/>
+  <path fill="#075b45" d="m256 155 58 42-22 68h-72l-22-68 58-42Zm-116 91 58-42 22 61-48 54-57-22 25-51Zm232 0 25 51-57 22-48-54 22-61 58 42ZM178 369l-6-50 48-54h72l48 54-6 50-78 35-78-35Z"/>
+</svg>
