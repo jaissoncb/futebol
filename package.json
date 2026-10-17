@@ -8,7 +8,11 @@
   },
   "packageManager": "pnpm@11.19.0",
   "scripts": {
-    "dev": "vite",
+    "dev:api": "node --experimental-strip-types api/dev.ts",
+    "dev:frontend": "vite --host localhost --port 5173 --strictPort",
+    "test:api": "node --experimental-strip-types --test api/tests/*.test.ts",
+    "test:database": "node --experimental-strip-types --test scripts/test-dev-database.ts",
+    "dev": "vite --host localhost --port 5173 --strictPort",
     "build": "tsc -b && vite build && node scripts/verify-build.mjs",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
@@ -22,6 +26,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.116.0",
+    "jose": "6.2.12",
+    "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-router-dom": "7.18.3"
@@ -32,6 +38,7 @@
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "14.6.7",
     "@types/node": "22.20.2",
+    "@types/pg": "8.23.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
