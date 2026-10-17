@@ -9,10 +9,11 @@
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "dev:api": "node --experimental-strip-types api/dev.ts",
-    "dev:frontend": "vite --host localhost --port 5173 --strictPort",
+    "dev:frontend": "vite --mode kinde-dev --host localhost --port 5173 --strictPort",
     "test:api": "node --experimental-strip-types --test api/tests/*.test.ts",
     "test:database": "node --experimental-strip-types --test scripts/test-dev-database.ts",
-    "dev": "vite --host localhost --port 5173 --strictPort",
+    "dev": "vite --mode kinde-dev --host localhost --port 5173 --strictPort",
+    "build:dev": "tsc -b && vite build --mode kinde-dev --outDir dist-dev && node scripts/verify-kinde-dev-build.mjs",
     "build": "tsc -b && vite build && node scripts/verify-build.mjs",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
@@ -25,6 +26,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@kinde-oss/kinde-auth-react": "5.13.1",
     "@supabase/supabase-js": "2.116.0",
     "jose": "6.2.12",
     "pg": "8.23.1",

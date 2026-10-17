@@ -5,7 +5,7 @@ import { loadEnv } from 'vite'
 import { validateSupabaseEnvironment } from './src/config/public-environment.ts'
 
 export default defineConfig(({ command, mode }) => {
-  if (command === 'build') {
+  if (command === 'build' && mode !== 'kinde-dev') {
     const env = loadEnv(mode, import.meta.dirname, ['VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY'])
     validateSupabaseEnvironment({
       VITE_SUPABASE_URL: env.VITE_SUPABASE_URL,
@@ -15,6 +15,16 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: '/',
     plugins: [
+      ...(mode === 'kinde-dev' ? [{
+        name: 'futebol-kinde-dev-entry',
+        transformIndexHtml: {
+          order: 'pre' as const,
+          handler(html: string) {
+            if (!html.includes('/src/main.tsx')) throw new Error('Entrada DEV inesperada.')
+            return html.replace('/src/main.tsx', '/src/dev/start-kinde.tsx')
+          },
+        },
+      }] : []),
       react(),
       VitePWA({
         base: '/',

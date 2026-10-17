@@ -9,7 +9,8 @@ Arquitetura planejada:
 - aplicação Vite/React na raiz;
 - rotas da interface com `HashRouter`;
 - PWA e service worker no escopo `/`;
-- banco e autenticação no projeto Supabase já existente.
+- baseline legado de banco/autenticação Supabase preservado até concluir a validação DEV;
+- DEV em migração para cliente público Kinde Test, API intermediária e Neon vazio/isolado.
 
 ## Requisitos
 
@@ -21,11 +22,14 @@ Arquitetura planejada:
 
 ```powershell
 pnpm install --frozen-lockfile
-Copy-Item .env.example .env.local
 pnpm dev
 ```
 
-Preencha `.env.local` apenas com a URL e a chave pública/publishable do ambiente apropriado. Nunca use uma chave `service_role` no frontend.
+`pnpm dev` serve a entrada Kinde Test isolada em `http://localhost:5173/`, com porta estrita e metadados públicos confirmados do Futebol. Não execute junto com Account Test ou a PoC Identity na mesma porta/origem. A transação OAuth tem namespace exclusivo; access/ID/refresh tokens ficam somente em memória. Reload pode exigir novo login. Account é somente o portal de gestão da conta.
+
+Em outro terminal, `pnpm dev:api` inicia a API local em localhost:8787 com autenticação **fechada por padrão**, sem banco, até a prova positiva do principal e a integração Neon serem validadas. O botão de acesso DEV pode receber 401 enquanto esse gate estiver aberto. Grupos/partidas ainda não estão ligados à nova entrada; a interface legada está preservada.
+
+`pnpm build:dev` gera `dist-dev/`, verifica raiz/PWA, configuração Test exclusiva e scanner de segredos, sem usar variáveis Supabase. Não publica nada. O build padrão/CI continuam no baseline legado; a migração completa não está liberada para Production. Nunca coloque Client Secret, DSN Neon ou qualquer chave privilegiada no frontend, `.env` compartilhado, Git ou Drive.
 
 ## Verificações do frontend
 

@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       'coverage',
       'dist',
+      'dist-dev',
       'node_modules',
       'src/lib/supabase/database.types.ts',
     ],
