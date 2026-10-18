@@ -1,4 +1,4 @@
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import { isApiServices, type FutebolDataClient } from '../lib/data-client'
 import type { Tables } from '../lib/supabase/database.types'
 import type { SaveDrawPayload } from './draw-payload'
 import { validateAdjustment } from '../draw/adjustments'
@@ -10,7 +10,8 @@ export type SavedMatch = {
 export const HISTORY_PAGE_SIZE = 50
 export const SAVE_TIMEOUT_MS = 20_000
 
-export async function saveMatchDraw(client: FutebolSupabaseClient, id: string, payload: SaveDrawPayload): Promise<string> {
+export async function saveMatchDraw(client: FutebolDataClient, id: string, payload: SaveDrawPayload): Promise<string> {
+  if (isApiServices(client)) return client.saveDraw(id, payload)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), SAVE_TIMEOUT_MS)
   try {
@@ -21,7 +22,8 @@ export async function saveMatchDraw(client: FutebolSupabaseClient, id: string, p
   } finally { clearTimeout(timeout) }
 }
 
-export async function loadMatchHistory(client: FutebolSupabaseClient, groupId: string, page = 0) {
+export async function loadMatchHistory(client: FutebolDataClient, groupId: string, page = 0) {
+  if (isApiServices(client)) return client.history(groupId, page)
   const { data, error } = await client.from('matches').select('*').eq('group_id', groupId).eq('status', 'drawn')
     .order('match_date', { ascending: false }).order('match_time', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false }).order('id', { ascending: false })
@@ -31,7 +33,8 @@ export async function loadMatchHistory(client: FutebolSupabaseClient, groupId: s
 }
 
 /** Scoped, RLS-protected reads. Historical data never comes from players. */
-export async function loadSavedMatch(client: FutebolSupabaseClient, groupId: string, id: string): Promise<SavedMatch> {
+export async function loadSavedMatch(client: FutebolDataClient, groupId: string, id: string): Promise<SavedMatch> {
+  if (isApiServices(client)) return client.savedMatch(groupId, id)
   const [m, p, t, a, r] = await Promise.all([
     client.from('matches').select('*').eq('group_id', groupId).eq('id', id).eq('status', 'drawn').single(),
     client.from('match_players').select('*').eq('group_id', groupId).eq('match_id', id).order('player_name_snapshot'),
@@ -43,6 +46,10 @@ export async function loadSavedMatch(client: FutebolSupabaseClient, groupId: str
   if (error) throw error
   if (!m.data) throw new Error('Partida indisponível.')
   const saved = { match: m.data, participants: p.data ?? [], teams: t.data ?? [], assignments: a.data ?? [], runs: r.data ?? [] }
+  return validateSavedMatch(saved)
+}
+
+export function validateSavedMatch(saved: SavedMatch): SavedMatch {
   const participantIds = new Set(saved.participants.map((row) => row.player_id))
   const teamIds = new Set(saved.teams.map((row) => row.id))
   if (saved.match.status !== 'drawn' || saved.teams.length !== saved.match.team_count || saved.participants.length === 0

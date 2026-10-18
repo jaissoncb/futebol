@@ -76,4 +76,30 @@ describe('Futebol Kinde DEV boundary', () => {
     expect(transport.mock.calls[0]![1]?.signal?.aborted).toBe(true)
     for (const [url] of transport.mock.calls) expect(url).toEqual(expect.stringContaining('/__dev/g3'))
   })
+  it('mounts the existing domain UI only after two stable UUID /me responses; logout removes private data', async () => {
+    const profileId = 'd0000000-0000-0000-0000-000000000001'
+    const transport = vi.fn<typeof fetch>().mockImplementation(url => Promise.resolve(Response.json(
+      (url as URL).pathname === '/workspace' ? { groups: [], players: [] } : { id: profileId, display_name: null })))
+    vi.stubGlobal('fetch', transport)
+    render(<KindeDevRoot session={configureKindeSession()} />)
+    const user = userEvent.setup()
+    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Verificar acesso ao Futebol' }))
+    expect(await screen.findByRole('button', { name: 'Criar grupo' })).toBeVisible()
+    expect(transport.mock.calls.filter(([url]) => (url as URL).pathname === '/me')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: 'Sair' }))
+    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Entrar com Sabará ID' })).toBeVisible()
+  })
+  it('does not mount domain UI for inconsistent identities returned by /me', async () => {
+    let calls = 0
+    const transport = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(Response.json({
+      id: `d0000000-0000-0000-0000-00000000000${++calls}`, display_name: null,
+    })))
+    vi.stubGlobal('fetch', transport)
+    render(<KindeDevRoot session={configureKindeSession()} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Verificar acesso ao Futebol' }))
+    await waitFor(() => expect(transport).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
+  })
 })

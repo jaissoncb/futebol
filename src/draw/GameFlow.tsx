@@ -3,7 +3,7 @@ import type { GroupWithRole, Player } from '../groups/group-service'
 import { drawTeams, DrawInputError, type DrawPlayer, type DrawResult } from './engine'
 import { movePlayer, swapCourtStatus, swapPlayers, type AdjustmentState } from './adjustments'
 import { localDateInputValue } from './local-date'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import { buildDrawPayload, TEAM_NAMES, type GameConfig, type SaveDrawPayload } from '../matches/draw-payload'
 import { saveMatchDraw } from '../matches/match-service'
 
@@ -15,7 +15,7 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
   return { playersOnCourt, teams: result.teams.map((team) => ({ playerIds: [...team.playerIds], reserveIds: [...team.reserveIds] })) }
 }
 
-export function GameFlow({ group, players, client = null, onSaved, onAttemptChange }: { group: GroupWithRole; players: Player[]; client?: FutebolSupabaseClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void }) {
+export function GameFlow({ group, players, client = null, onSaved, onAttemptChange }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void }) {
   const [step, setStep] = useState<GameStep>('details')
   const [config, setConfig] = useState<GameConfig>({ name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
   const [selected, setSelected] = useState<string[]>([])

@@ -4,6 +4,7 @@ import type { Principal } from './auth.ts'
 import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
 
 export interface ApiDependencies {
+  health?: { status: 'dev'; authentication: 'gated' | 'validated-dev' }
   authenticate: (authorization: string | undefined) => Promise<Principal>
   dispatch: (principal: Principal, method: string, url: URL, body: unknown) => Promise<unknown>
 }
@@ -54,7 +55,7 @@ export function createApi(dependencies: ApiDependencies) {
       buckets.set(address, bucket)
       const url = new URL(request.url ?? '/', 'http://localhost:8787')
       if (url.pathname === '/health' && request.method === 'GET') {
-        reply(response, 200, { status: 'dev', authentication: 'gated' }); return
+        reply(response, 200, dependencies.health ?? { status: 'dev', authentication: 'gated' }); return
       }
       // Authenticate before body parsing and, critically, before DB dispatch/bootstrap.
       if (request.rawHeaders.filter((_, index) => index % 2 === 0)

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { JWTVerifyGetKey } from 'jose'
-import { createTokenValidator, AuthenticationError } from './auth.ts'
+import { createTokenValidator, AuthenticationError, IdentityUnavailableError } from './auth.ts'
 import { createUserinfoProof, g3Policy } from './g3.ts'
 import { createApi, HttpError } from './server.ts'
 
@@ -9,13 +9,18 @@ export type ProbeEvidence = Record<string, string | number | boolean>
 export function createG3Probe(record: (event: ProbeEvidence) => void,
   transport: typeof fetch = fetch, keyResolver?: JWTVerifyGetKey) {
   let previousTokenDigest: string | undefined
-  const proof = createUserinfoProof({ fetch: transport, onProof: event => record({
+  // Two real requests exceeded the initial 2 s budget; bounded DEV calibration.
+  const proof = createUserinfoProof({ fetch: transport, timeoutMs: 5000,
+    onUnavailable: event => record({ event: 'userinfo_unavailable', ...event, timeoutBudgetMs: 5000 }),
+    onProof: event => record({
     event: 'userinfo_confirmed', source: event.source, elapsedMs: event.elapsedMs,
-    sameBearer: true, subjectMatches: true,
+    sameBearer: true, subjectMatches: true, timeoutBudgetMs: 5000,
   }) })
   const validate = createTokenValidator(g3Policy, async (claims, bearer) => {
     const digest = createHash('sha256').update(bearer).digest('hex')
     record({ event: 'signed_claims', amrPwd: Array.isArray(claims.amr) && claims.amr.includes('pwd'),
+      amrClaimPresent: Object.hasOwn(claims, 'amr'), amrArray: Array.isArray(claims.amr),
+      authTimeClaimPresent: Object.hasOwn(claims, 'auth_time'),
       authTimePresent: typeof claims.auth_time === 'number' && Number.isFinite(claims.auth_time),
       authTimeCoherent: typeof claims.auth_time === 'number' && typeof claims.iat === 'number'
         && claims.auth_time > 0 && claims.auth_time <= claims.iat + 30 && claims.auth_time <= Date.now() / 1000 + 30,
@@ -29,7 +34,9 @@ export function createG3Probe(record: (event: ProbeEvidence) => void,
     authenticate: async bearer => {
       try { return await validate(bearer) }
       catch (error) {
-        record({ event: 'authentication_denied', httpStatus: error instanceof AuthenticationError ? 401 : 503 })
+        record({ event: 'authentication_denied', httpStatus: error instanceof AuthenticationError ? 401 : 503,
+          dependency: error instanceof IdentityUnavailableError ? error.dependency : 'token',
+          reason: error instanceof IdentityUnavailableError ? error.reason : 'invalid_token' })
         throw error
       }
     },

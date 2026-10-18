@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
 import {
   createGroup,
@@ -17,7 +17,7 @@ import {
 const MatchWorkspace = lazy(async () => ({ default: (await import('../matches/MatchWorkspace')).MatchWorkspace }))
 
 interface GroupDashboardProps {
-  client: FutebolSupabaseClient | null
+  client: FutebolDataClient | null
   userId: string
   onAttemptChange?: (pending: boolean) => void
 }
@@ -287,7 +287,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
 }
 
 function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled = false, onBusyChange }: {
-  client: FutebolSupabaseClient | null
+  client: FutebolDataClient | null
   groupId?: string
   disabled?: boolean
   initialValue: GroupInput
@@ -338,7 +338,7 @@ function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled 
 }
 
 function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved, onBusyChange }: {
-  client: FutebolSupabaseClient | null
+  client: FutebolDataClient | null
   groupId: string
   initialValue: PlayerInput
   playerId?: string

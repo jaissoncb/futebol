@@ -113,6 +113,19 @@ void test('timeout covers headers AND stalled streaming body; ignored abort cann
   assert.equal(bodyCancelled, true)
 })
 
+void test('calibrated timeout is bounded and unavailable diagnostics expose only classification/timing', async () => {
+  assert.throws(() => createUserinfoProof({ timeoutMs: 5001 }), /invalid_timeout/)
+  const events: unknown[] = []
+  const proof = createUserinfoProof({ timeoutMs: 5, onUnavailable: event => events.push(event),
+    fetch: () => new Promise<Response>(() => undefined) })
+  await assert.rejects(proof(claims, 'Bearer synthetic-private'), (error: unknown) => error instanceof IdentityUnavailableError
+    && error.dependency === 'userinfo' && error.reason === 'timeout')
+  assert.equal(events.length, 1)
+  assert.match(JSON.stringify(events), /timeout/)
+  assert.ok(!JSON.stringify(events).includes('synthetic-private'))
+  assert.ok(!JSON.stringify(events).includes(claims.sub))
+})
+
 void test('positive cache max 60 s, token exp bound, context bound, distinct refreshed token and no stale-on-error', async () => {
   let clock = now * 1000
   let calls = 0

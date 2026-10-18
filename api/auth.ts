@@ -5,7 +5,11 @@ export class AuthenticationError extends Error {
   constructor() { super('invalid_access_token') }
 }
 export class IdentityUnavailableError extends Error {
-  constructor() { super('identity_unavailable') }
+  readonly dependency: 'jwks' | 'userinfo' | 'unknown'
+  readonly reason: 'timeout' | 'unavailable'
+  constructor(dependency: 'jwks' | 'userinfo' | 'unknown' = 'unknown', reason: 'timeout' | 'unavailable' = 'unavailable') {
+    super('identity_unavailable'); this.dependency = dependency; this.reason = reason
+  }
 }
 
 export interface Principal { issuer: string; subject: string }
@@ -49,7 +53,7 @@ export function createTokenValidator(
     try { return await remote(header, token) }
     catch (error) {
       if (error instanceof errors.JWKSNoMatchingKey) throw error
-      throw new IdentityUnavailableError()
+      throw new IdentityUnavailableError('jwks', error instanceof errors.JWKSTimeout ? 'timeout' : 'unavailable')
     }
   })
   return async (authorization: string | undefined): Promise<Principal> => {

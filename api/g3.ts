@@ -26,6 +26,7 @@ interface ProofOptions {
   now?: () => number
   timeoutMs?: number
   onProof?: (event: ProofEvent) => void
+  onUnavailable?: (event: { reason: 'timeout' | 'unavailable'; elapsedMs: number }) => void
 }
 
 // No configurable endpoint, bearer logging, negative cache or stale fallback.
@@ -34,7 +35,7 @@ export function createUserinfoProof(options: ProofOptions = {}) {
   const request = options.fetch ?? fetch
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? 2000
-  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2000) throw new Error('invalid_timeout')
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) throw new Error('invalid_timeout')
   const cache = new Map<string, { context: string; until: number }>()
   const inFlight = new Map<string, { context: string; work: Promise<boolean> }>()
   return async (claims: Readonly<JWTPayload>, bearer: string): Promise<boolean> => {
@@ -120,7 +121,9 @@ export function createUserinfoProof(options: ProofOptions = {}) {
     }
     const work = Promise.race([remote(), timeout]).catch((error: unknown) => {
       if (error instanceof AuthenticationError) throw error
-      throw new IdentityUnavailableError()
+      options.onUnavailable?.({ reason: controller.signal.aborted ? 'timeout' : 'unavailable',
+        elapsedMs: Math.max(0, now() - started) })
+      throw new IdentityUnavailableError('userinfo', controller.signal.aborted ? 'timeout' : 'unavailable')
     }).finally(() => {
       clearTimeout(timer); controller.abort(); inFlight.delete(key)
     })

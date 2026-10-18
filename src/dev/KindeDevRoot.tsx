@@ -4,7 +4,9 @@ import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
 import { cleanKindeCallback } from '../bootstrap/kinde-return'
 import { createFutebolAuthorization } from '../auth/kinde-authorization'
-import { ApiError, createApiClient } from '../lib/api/client'
+import { ApiError } from '../lib/api/client'
+import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
+import { DevWorkspace } from './DevWorkspace'
 import { accountPortalUrl, kindeTestConfig } from './kinde-test-config'
 import { createG3BrowserProbe } from './g3-probe'
 
@@ -56,8 +58,11 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
+  const [locallySignedOut, setLocallySignedOut] = useState(false)
+  const activeSession = auth.isAuthenticated && !locallySignedOut
+  const [workspace, setWorkspace] = useState<{ services: FutebolApiServices; internalId: string } | null>(null)
   const logoutLock = useRef(false)
-  const clients = useRef(new Set<ReturnType<typeof createApiClient>>())
+  const clients = useRef(new Set<FutebolApiServices>())
   const generation = useRef(0)
   const closePrivateRequests = useCallback(() => {
     generation.current++
@@ -72,7 +77,7 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('futebol-dev-session')
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => {
       if (event.data === 'logout') {
-        probe.close(); closePrivateRequests(); session.transaction.destroySession(); setStatus(null); setBusy(false)
+        probe.close(); closePrivateRequests(); session.transaction.destroySession(); setLocallySignedOut(true); setWorkspace(null); setStatus(null); setBusy(false)
       }
     }
     return () => channel?.close()
@@ -88,8 +93,9 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
   async function logout() {
     if (logoutLock.current) return
     logoutLock.current = true; setLoggingOut(true)
+    setLocallySignedOut(true)
     probe.close()
-    closePrivateRequests(); setStatus(null); setBusy(true)
+    closePrivateRequests(); setWorkspace(null); setStatus(null); setBusy(true)
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('futebol-dev-session')
     channel?.postMessage('logout'); channel?.close()
     try { await auth.logout() } // normal Kinde logout, never allSessions:true
@@ -97,18 +103,24 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
     finally { session.transaction.destroySession(); logoutLock.current = false; setLoggingOut(false); setBusy(false) }
   }
   async function checkAccess() {
-    if (busy || !auth.isAuthenticated) return
+    if (busy || !activeSession) return
     const requestGeneration = generation.current
-    const client = createApiClient('http://localhost:8787', async () => (await auth.getAccessToken()) ?? null)
+    const client = createFutebolApiServices(async () => (await auth.getAccessToken()) ?? null)
+    let retained = false
     clients.current.add(client); setBusy(true); setStatus(null)
     try {
-      await client.request('/me')
-      if (requestGeneration === generation.current) setStatus('Acesso ao Futebol confirmado.')
+      const profile = await client.me()
+      const repeated = await client.me() // DEV vertical proof of idempotent /me.
+      if (repeated.id !== profile.id) throw new Error('inconsistent_profile')
+      if (requestGeneration === generation.current) {
+        retained = true; probe.close()
+        setWorkspace({ services: client, internalId: profile.id })
+      }
     } catch (error) {
       if (requestGeneration === generation.current) setStatus(error instanceof ApiError && error.status === 401
         ? 'A integração DEV ainda está em validação.' : 'Não foi possível verificar o acesso agora.')
     } finally {
-      client.close(); clients.current.delete(client)
+      if (!retained) { client.close(); clients.current.delete(client) }
       if (requestGeneration === generation.current) setBusy(false)
     }
   }
@@ -118,6 +130,8 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
       if (access) await probe.start(access, await auth.getIdToken())
     } catch { setStatus('Não foi possível iniciar o diagnóstico. Dados bloqueados.') }
   }
+  if (workspace && activeSession) return <DevWorkspace services={workspace.services} internalId={workspace.internalId}
+    onLogout={logout} loggingOut={loggingOut} />
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="#/">⚽ Futebol</a><span>DEV</span></header>
     <main className="main-content"><section className="hero-card">
@@ -125,7 +139,7 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
       <h1>Seu Futebol com Sabará ID.</h1>
       <p>Integração DEV em validação. Os grupos e as partidas serão liberados após os testes de acesso.</p>
       {failed ? <p role="alert">Não foi possível concluir a autenticação. Entre novamente.</p> : null}
-      {auth.isAuthenticated ? <>
+      {activeSession ? <>
         <p role="status">Login Kinde concluído nesta aba.</p>
         <button className="primary-action" disabled={busy} onClick={() => void checkAccess()}>Verificar acesso ao Futebol</button>
         <button disabled={loggingOut} onClick={() => void logout()}>Sair</button>

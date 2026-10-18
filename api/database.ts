@@ -3,7 +3,7 @@ import type { PoolClient } from 'pg'
 import type { Principal } from './auth.ts'
 
 export function createRuntimePool(connectionString: string): Pool {
-  // DEV remote credentials must arrive through the runtime's secret environment.
+  // Remote credentials are backend-only; the isolated DEV runner uses stdin.
   // Never turn off certificate validation or log the DSN.
   let url: URL
   try { url = new URL(connectionString) } catch { throw new Error('invalid_database_config') }
@@ -36,6 +36,17 @@ export async function assertRuntimeRole(pool: Pool): Promise<void> {
         or inherited.rolcreaterole or inherited.rolreplication))
   ) as unsafe from pg_roles r where r.rolname=current_user`)
   if (result.rows.length !== 1 || result.rows[0].unsafe) throw new Error('unsafe_runtime_role')
+}
+
+export async function assertDatabaseBoundary(pool: Pool): Promise<void> {
+  const result = await pool.query<{ safe: boolean }>(`select
+    (select count(*)=11 and bool_and(c.relrowsecurity and pg_get_userbyid(c.relowner)='futebol_owner')
+      from pg_class c join pg_namespace n on n.oid=c.relnamespace
+      where n.nspname in ('public','private') and c.relkind='r')
+    and not exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace,
+      lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+      where n.nspname in ('public','private') and a.grantee=0 and a.privilege_type='EXECUTE') as safe`)
+  if (result.rows[0]?.safe !== true) throw new Error('unsafe_database_boundary')
 }
 
 export async function withActor<T>(pool: Pool, principal: Principal, work: (client: PoolClient, id: string) => Promise<T>): Promise<T> {

@@ -1,17 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import type { GroupWithRole } from '../groups/group-service'
 import type { Tables } from '../lib/supabase/database.types'
 import { HISTORY_PAGE_SIZE, loadMatchHistory, loadSavedMatch, type SavedMatch } from './match-service'
 import { formatMatchDate, shareSavedResult } from './share-result'
 
-export function MatchHistory({ client, group, selectedId, onSelect }: { client: FutebolSupabaseClient | null; group: GroupWithRole; selectedId: string | null; onSelect: (id: string | null) => void }) {
+export function MatchHistory({ client, group, selectedId, onSelect }: { client: FutebolDataClient | null; group: GroupWithRole; selectedId: string | null; onSelect: (id: string | null) => void }) {
   const [revision, setRevision] = useState(0)
   return selectedId ? <MatchDetail key={selectedId} client={client} groupId={group.id} id={selectedId} onBack={() => { onSelect(null); setRevision((n) => n + 1) }} />
     : <HistoryList key={`${group.id}:${revision}`} client={client} groupId={group.id} onSelect={onSelect} />
 }
 
-function HistoryList({ client, groupId, onSelect }: { client: FutebolSupabaseClient | null; groupId: string; onSelect: (id: string) => void }) {
+function HistoryList({ client, groupId, onSelect }: { client: FutebolDataClient | null; groupId: string; onSelect: (id: string) => void }) {
   const list = useRef<HTMLDivElement>(null)
   useEffect(() => { list.current?.focus() }, [])
   const [rows, setRows] = useState<Tables<'matches'>[]>([])
@@ -43,7 +43,7 @@ function HistoryList({ client, groupId, onSelect }: { client: FutebolSupabaseCli
   </div>
 }
 
-function MatchDetail({ client, groupId, id, onBack }: { client: FutebolSupabaseClient | null; groupId: string; id: string; onBack: () => void }) {
+function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClient | null; groupId: string; id: string; onBack: () => void }) {
   const detail = useRef<HTMLElement>(null)
   const [saved, setSaved] = useState<SavedMatch | null>(null)
   const [loading, setLoading] = useState(true)

@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts", "scripts/test-dev-database.ts", "scripts/test-neon-dev.ts"]
+  "include": ["vite.config.ts", "eslint.config.js", "api/**/*.ts", "scripts/test-dev-database.ts", "scripts/test-neon-dev.ts", "scripts/start-neon-dev.ts", "scripts/neon-domain-preflight.ts"]
 }

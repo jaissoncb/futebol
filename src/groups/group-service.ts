@@ -1,4 +1,4 @@
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import { isApiServices, type FutebolDataClient } from '../lib/data-client'
 import type { Database } from '../lib/supabase/database.types'
 
 export type Group = Database['public']['Tables']['groups']['Row']
@@ -31,9 +31,10 @@ export interface PlayerInput {
 }
 
 export async function loadGroupWorkspace(
-  client: FutebolSupabaseClient,
+  client: FutebolDataClient,
   userId: string,
 ): Promise<GroupWorkspaceData> {
+  if (isApiServices(client)) return client.workspace()
   const [groupsResult, membershipsResult, playersResult] = await Promise.all([
     client.from('groups').select('*').order('updated_at', { ascending: false }),
     client.from('group_members').select('group_id, role').eq('user_id', userId),
@@ -52,7 +53,8 @@ export async function loadGroupWorkspace(
   return { groups, players: playersResult.data ?? [] }
 }
 
-export async function createGroup(client: FutebolSupabaseClient, input: GroupInput): Promise<string> {
+export async function createGroup(client: FutebolDataClient, input: GroupInput): Promise<string> {
+  if (isApiServices(client)) return client.createGroup(input)
   const { data, error } = await client.rpc('create_group', {
     default_players_on_court: input.defaultPlayersOnCourt,
     group_name: input.name.trim(),
@@ -64,10 +66,11 @@ export async function createGroup(client: FutebolSupabaseClient, input: GroupInp
 }
 
 export async function updateGroup(
-  client: FutebolSupabaseClient,
+  client: FutebolDataClient,
   groupId: string,
   input: GroupInput,
 ): Promise<void> {
+  if (isApiServices(client)) return client.updateGroup(groupId, input)
   const { error } = await client
     .from('groups')
     .update({
@@ -83,10 +86,11 @@ export async function updateGroup(
 }
 
 export async function createPlayer(
-  client: FutebolSupabaseClient,
+  client: FutebolDataClient,
   groupId: string,
   input: PlayerInput,
 ): Promise<void> {
+  if (isApiServices(client)) return client.createPlayer(groupId, input)
   const { error } = await client.from('players').insert({
     active: input.active,
     group_id: groupId,
@@ -101,10 +105,11 @@ export async function createPlayer(
 }
 
 export async function updatePlayer(
-  client: FutebolSupabaseClient,
+  client: FutebolDataClient,
   playerId: string,
   input: PlayerInput,
 ): Promise<void> {
+  if (isApiServices(client)) return client.updatePlayer(playerId, input)
   const { error } = await client
     .from('players')
     .update({

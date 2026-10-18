@@ -1,6 +1,9 @@
+param([ValidateSet('test','api')][string]$Mode = 'test')
 $ErrorActionPreference = 'Stop'
+$Host.UI.RawUI.WindowTitle = ('Futebol Neon DEV — ' + $Mode)
 $taskRoot = 'D:\Projetos\Futebol'
 Write-Host 'Futebol Neon DEV — conexão temporária em memória, sem arquivos de credenciais.'
+Write-Host ('Modo: ' + $Mode)
 Write-Host 'No console Neon: projeto futebol-dev-20261018, branch dev, banco futebol_dev, role futebol_dev_owner.'
 Write-Host 'Copie a connection string PostgreSQL para o campo oculto abaixo. Não cole no chat.'
 $taskSecret = Read-Host 'Connection string DEV (entrada oculta)' -AsSecureString
@@ -12,7 +15,7 @@ try {
     $taskStart.FileName = (Get-Command node).Source
     $taskStart.WorkingDirectory = $taskRoot
     $taskStart.ArgumentList.Add('--experimental-strip-types')
-    $taskStart.ArgumentList.Add('scripts/test-neon-dev.ts')
+    $taskStart.ArgumentList.Add($(if($Mode -eq 'api'){'scripts/start-neon-dev.ts'}else{'scripts/test-neon-dev.ts'}))
     $taskStart.UseShellExecute = $false
     $taskStart.RedirectStandardInput = $true
     $taskProcess = [Diagnostics.Process]::Start($taskStart)
@@ -26,4 +29,5 @@ try {
     $taskSecret.Dispose()
     Remove-Variable taskConnection -ErrorAction SilentlyContinue
 }
-Read-Host 'Pressione Enter para fechar esta janela'
+$taskCloseInput = Read-Host 'Pressione Enter para fechar esta janela' -AsSecureString
+$taskCloseInput.Dispose()
