@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Principal } from './auth.ts'
-import { AuthenticationError } from './auth.ts'
+import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
 
 export interface ApiDependencies {
   authenticate: (authorization: string | undefined) => Promise<Principal>
@@ -57,6 +57,8 @@ export function createApi(dependencies: ApiDependencies) {
         reply(response, 200, { status: 'dev', authentication: 'gated' }); return
       }
       // Authenticate before body parsing and, critically, before DB dispatch/bootstrap.
+      if (request.rawHeaders.filter((_, index) => index % 2 === 0)
+        .filter(name => name.toLowerCase() === 'authorization').length !== 1) throw new AuthenticationError()
       const principal = await dependencies.authenticate(request.headers.authorization)
       const body = await readBody(request)
       reply(response, 200, await dependencies.dispatch(principal, request.method ?? '', url, body))
@@ -64,6 +66,9 @@ export function createApi(dependencies: ApiDependencies) {
       if (error instanceof AuthenticationError) {
         response.setHeader('WWW-Authenticate', 'Bearer')
         reply(response, 401, { error: 'invalid_access_token' })
+      } else if (error instanceof IdentityUnavailableError) {
+        response.setHeader('Retry-After', '2')
+        reply(response, 503, { error: 'identity_unavailable' })
       } else if (error instanceof HttpError) reply(response, error.status, { error: error.code })
       else reply(response, 503, { error: 'service_unavailable' })
       // No request/headers/body/error logging: provider errors may contain secrets.

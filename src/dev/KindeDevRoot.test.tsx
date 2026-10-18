@@ -8,7 +8,8 @@ import { kindeTestConfig } from './kinde-test-config'
 
 const mocks = vi.hoisted(() => ({
   provider: vi.fn<(props: Record<string, unknown>) => void>(),
-  auth: { isAuthenticated: true, getAccessToken: vi.fn<() => Promise<string | undefined>>(), logout: vi.fn<() => Promise<void>>() },
+  auth: { isAuthenticated: true, getAccessToken: vi.fn<() => Promise<string | undefined>>(),
+    getIdToken: vi.fn<() => Promise<string | undefined>>(), logout: vi.fn<() => Promise<void>>() },
 }))
 vi.mock('@kinde-oss/kinde-auth-react', () => ({
   KindeProvider: ({ children, ...props }: { children: ReactNode }) => { mocks.provider(props); return children },
@@ -20,6 +21,7 @@ describe('Futebol Kinde DEV boundary', () => {
     vi.clearAllMocks(); localStorage.clear(); window.location.hash = '#/'
     mocks.auth.isAuthenticated = true
     mocks.auth.getAccessToken.mockResolvedValue('synthetic-memory-access')
+    mocks.auth.getIdToken.mockResolvedValue('synthetic-memory-id')
     mocks.auth.logout.mockResolvedValue(undefined)
   })
   afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
@@ -51,5 +53,27 @@ describe('Futebol Kinde DEV boundary', () => {
     expect(transport.mock.calls[0]![1]?.signal?.aborted).toBe(true)
     await act(async () => { release(new Response(JSON.stringify({ id: 'old-fixture-user' }))); await pending })
     expect(screen.queryByText('Acesso ao Futebol confirmado.')).not.toBeInTheDocument()
+  })
+  it('diagnoses only successful SDK refresh events, stops token requests on logout and keeps data separate', async () => {
+    const transport = vi.fn<typeof fetch>().mockResolvedValue(new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', transport)
+    render(<KindeDevRoot session={configureKindeSession()} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Iniciar diagnóstico G3' }))
+    await waitFor(() => expect(transport).toHaveBeenCalledTimes(3))
+    const callbacks = mocks.provider.mock.lastCall![0].callbacks as {
+      onEvent: (event: string, result: { success: boolean }, context: typeof mocks.auth) => void
+    }
+    await act(async () => { callbacks.onEvent('tokenRefreshed', { success: false }, mocks.auth); await Promise.resolve() })
+    expect(transport).toHaveBeenCalledTimes(3)
+    mocks.auth.getAccessToken.mockResolvedValue('synthetic-new-access')
+    await act(async () => { callbacks.onEvent('tokenRefreshed', { success: true }, mocks.auth); await Promise.resolve() })
+    await waitFor(() => expect(transport).toHaveBeenCalledTimes(4))
+    expect(transport.mock.lastCall![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-new-access' })
+    await user.click(screen.getByRole('button', { name: 'Sair' }))
+    await act(async () => { callbacks.onEvent('tokenRefreshed', { success: true }, mocks.auth); await Promise.resolve() })
+    expect(transport).toHaveBeenCalledTimes(4)
+    expect(transport.mock.calls[0]![1]?.signal?.aborted).toBe(true)
+    for (const [url] of transport.mock.calls) expect(url).toEqual(expect.stringContaining('/__dev/g3'))
   })
 })

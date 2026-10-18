@@ -3,6 +3,9 @@
 begin;
 create role futebol_owner nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
 create role futebol_runtime nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+-- Managed PG migration logins are not superusers: explicit membership is needed
+-- for schema ownership and SET ROLE. This is never granted to runtime logins.
+grant futebol_owner to current_user;
 revoke create on schema public from public;
 create schema private authorization futebol_owner;
 alter schema public owner to futebol_owner;

@@ -9,6 +9,7 @@
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "dev:api": "node --experimental-strip-types api/dev.ts",
+    "dev:g3": "node --experimental-strip-types api/g3-dev.ts",
     "dev:frontend": "vite --mode kinde-dev --host localhost --port 5173 --strictPort",
     "test:api": "node --experimental-strip-types --test api/tests/*.test.ts",
     "test:database": "node --experimental-strip-types --test scripts/test-dev-database.ts",

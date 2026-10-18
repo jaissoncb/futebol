@@ -6,6 +6,7 @@ import { cleanKindeCallback } from '../bootstrap/kinde-return'
 import { createFutebolAuthorization } from '../auth/kinde-authorization'
 import { ApiError, createApiClient } from '../lib/api/client'
 import { accountPortalUrl, kindeTestConfig } from './kinde-test-config'
+import { createG3BrowserProbe } from './g3-probe'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
@@ -13,7 +14,15 @@ type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
 export function KindeDevRoot({ session, initialFailed = false }: { session: Session; initialFailed?: boolean }) {
   const [failed, setFailed] = useState(initialFailed)
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  const [probeStatus, setProbeStatus] = useState('')
+  const probe = useMemo(() => createG3BrowserProbe(setProbeStatus), [])
+  useEffect(() => () => probe.close(), [probe])
   const callbacks = useMemo<Callbacks>(() => ({
+    onEvent: (event, _state, context) => {
+      // No manual refresh control: the official SDK timer/focus owns refresh.
+      if (String(event) === 'tokenRefreshed' && _state.success === true) void context.getAccessToken().then(token => probe.refreshed(token))
+        .catch(() => setProbeStatus('G3 automatic: indisponível. Dados bloqueados.'))
+    },
     onSuccess: (_user, state) => {
       setFailed(false)
       setSessionEpoch(value => value + 1)
@@ -25,22 +34,24 @@ export function KindeDevRoot({ session, initialFailed = false }: { session: Sess
       setFailed(true)
       setSessionEpoch(value => value + 1)
       session.transaction.destroySession()
+      probe.close()
       window.history.replaceState({}, '', cleanKindeCallback(new URL(window.location.href), '#/'))
       // Never retain/display provider descriptions, callback parameters or tokens.
     },
-  }), [session])
+  }), [session, probe])
   return <KindeProvider {...kindeTestConfig} scope={KINDE_SCOPE} store={session.memory}
     useInsecureForRefreshToken={false} refreshOnFocus callbacks={callbacks}>
     {/* Default SDK loading gate completes callback handling before HashRouter mounts. */}
     <HashRouter><Routes>
-      <Route path="/" element={<DevHome key={sessionEpoch} session={session} failed={failed} />} />
-      <Route path="/conta" element={<DevHome key={sessionEpoch} session={session} failed={failed} />} />
+      <Route path="/" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} />} />
+      <Route path="/conta" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} />} />
       <Route path="*" element={<Link to="/">Voltar ao Futebol</Link>} />
     </Routes></HashRouter>
   </KindeProvider>
 }
 
-function DevHome({ session, failed }: { session: Session; failed: boolean }) {
+function DevHome({ session, failed, probe, probeStatus }: { session: Session; failed: boolean;
+  probe: ReturnType<typeof createG3BrowserProbe>; probeStatus: string }) {
   const auth = useKindeAuth()
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -61,11 +72,11 @@ function DevHome({ session, failed }: { session: Session; failed: boolean }) {
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('futebol-dev-session')
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => {
       if (event.data === 'logout') {
-        closePrivateRequests(); session.transaction.destroySession(); setStatus(null); setBusy(false)
+        probe.close(); closePrivateRequests(); session.transaction.destroySession(); setStatus(null); setBusy(false)
       }
     }
     return () => channel?.close()
-  }, [session, closePrivateRequests])
+  }, [session, closePrivateRequests, probe])
 
   async function login(register = false) {
     setStatus(null)
@@ -77,6 +88,7 @@ function DevHome({ session, failed }: { session: Session; failed: boolean }) {
   async function logout() {
     if (logoutLock.current) return
     logoutLock.current = true; setLoggingOut(true)
+    probe.close()
     closePrivateRequests(); setStatus(null); setBusy(true)
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('futebol-dev-session')
     channel?.postMessage('logout'); channel?.close()
@@ -100,6 +112,12 @@ function DevHome({ session, failed }: { session: Session; failed: boolean }) {
       if (requestGeneration === generation.current) setBusy(false)
     }
   }
+  async function startProbe() {
+    try {
+      const access = await auth.getAccessToken()
+      if (access) await probe.start(access, await auth.getIdToken())
+    } catch { setStatus('Não foi possível iniciar o diagnóstico. Dados bloqueados.') }
+  }
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="#/">⚽ Futebol</a><span>DEV</span></header>
     <main className="main-content"><section className="hero-card">
@@ -111,11 +129,13 @@ function DevHome({ session, failed }: { session: Session; failed: boolean }) {
         <p role="status">Login Kinde concluído nesta aba.</p>
         <button className="primary-action" disabled={busy} onClick={() => void checkAccess()}>Verificar acesso ao Futebol</button>
         <button disabled={loggingOut} onClick={() => void logout()}>Sair</button>
+        <button disabled={busy || loggingOut} onClick={() => void startProbe()}>Iniciar diagnóstico G3</button>
       </> : <>
         <button className="primary-action" disabled={busy} onClick={() => void login()}>Entrar com Sabará ID</button>
         <button disabled={busy} onClick={() => void login(true)}>Criar conta no Sabará ID</button>
       </>}
       {status ? <p role="status">{status}</p> : null}
+      {probeStatus ? <p role="status">{probeStatus}</p> : null}
       <p><a href={accountPortalUrl} rel="noopener noreferrer" target="_blank">Gerenciar minha conta Sabará</a></p>
       <p className="helper-text">Ao recarregar ou abrir outra aba, pode ser necessário entrar novamente.</p>
     </section></main>
