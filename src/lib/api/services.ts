@@ -12,6 +12,8 @@ export function createFutebolApiServices(getAccessToken: () => Promise<string | 
   const client = createApiClient('http://localhost:8787', getAccessToken, transport)
   return {
     kind: 'futebol-api' as const,
+    isClosed: client.isClosed,
+    subscribeClosed: client.subscribeClosed,
     close: () => client.close(),
     async me() {
       const profile = await client.request<{ id: string; display_name: string | null }>('/me')

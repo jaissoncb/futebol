@@ -12,11 +12,20 @@ export function createApiClient(baseUrl: string, getAccessToken: () => Promise<s
   }
   let closed = false
   const requests = new Set<AbortController>()
+  const closedListeners = new Set<() => void>()
   return {
+    isClosed: () => closed,
+    subscribeClosed: (listener: () => void) => {
+      if (!closed) closedListeners.add(listener)
+      return () => { closedListeners.delete(listener) }
+    },
     close() {
+      if (closed) return
       closed = true
       for (const request of requests) request.abort()
       requests.clear()
+      for (const listener of closedListeners) listener()
+      closedListeners.clear()
     },
     async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
       if (closed) throw new ApiError(401)

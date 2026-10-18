@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { KindeProvider, useKindeAuth } from '@kinde-oss/kinde-auth-react'
 import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
@@ -9,21 +9,28 @@ import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/se
 import { DevWorkspace } from './DevWorkspace'
 import { accountPortalUrl, kindeTestConfig } from './kinde-test-config'
 import { createG3BrowserProbe } from './g3-probe'
+import { PwaUpdate } from '../PwaUpdate'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
+const noClientSubscription = () => () => undefined
+const noClientClosed = () => true
 
 export function KindeDevRoot({ session, initialFailed = false }: { session: Session; initialFailed?: boolean }) {
   const [failed, setFailed] = useState(initialFailed)
   const [sessionEpoch, setSessionEpoch] = useState(0)
+  const [refreshEpoch, setRefreshEpoch] = useState(0)
   const [probeStatus, setProbeStatus] = useState('')
   const probe = useMemo(() => createG3BrowserProbe(setProbeStatus), [])
   useEffect(() => () => probe.close(), [probe])
   const callbacks = useMemo<Callbacks>(() => ({
     onEvent: (event, _state, context) => {
       // No manual refresh control: the official SDK timer/focus owns refresh.
-      if (String(event) === 'tokenRefreshed' && _state.success === true) void context.getAccessToken().then(token => probe.refreshed(token))
-        .catch(() => setProbeStatus('G3 automatic: indisponível. Dados bloqueados.'))
+      if (String(event) === 'tokenRefreshed' && _state.success === true) {
+        setRefreshEpoch(value => value + 1)
+        void context.getAccessToken().then(token => probe.refreshed(token))
+          .catch(() => setProbeStatus('G3 automatic: indisponível. Dados bloqueados.'))
+      }
     },
     onSuccess: (_user, state) => {
       setFailed(false)
@@ -45,25 +52,28 @@ export function KindeDevRoot({ session, initialFailed = false }: { session: Sess
     useInsecureForRefreshToken={false} refreshOnFocus callbacks={callbacks}>
     {/* Default SDK loading gate completes callback handling before HashRouter mounts. */}
     <HashRouter><Routes>
-      <Route path="/" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} />} />
-      <Route path="/conta" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} />} />
+      <Route path="/" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} refreshEpoch={refreshEpoch} />} />
+      <Route path="/conta" element={<DevHome key={sessionEpoch} session={session} failed={failed} probe={probe} probeStatus={probeStatus} refreshEpoch={refreshEpoch} />} />
       <Route path="*" element={<Link to="/">Voltar ao Futebol</Link>} />
     </Routes></HashRouter>
   </KindeProvider>
 }
 
-function DevHome({ session, failed, probe, probeStatus }: { session: Session; failed: boolean;
-  probe: ReturnType<typeof createG3BrowserProbe>; probeStatus: string }) {
+function DevHome({ session, failed, probe, probeStatus, refreshEpoch }: { session: Session; failed: boolean;
+  probe: ReturnType<typeof createG3BrowserProbe>; probeStatus: string; refreshEpoch: number }) {
   const auth = useKindeAuth()
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [locallySignedOut, setLocallySignedOut] = useState(false)
   const activeSession = auth.isAuthenticated && !locallySignedOut
-  const [workspace, setWorkspace] = useState<{ services: FutebolApiServices; internalId: string } | null>(null)
+  const [workspace, setWorkspace] = useState<{ services: FutebolApiServices; internalId: string; generation: number } | null>(null)
+  const workspaceClosed = useSyncExternalStore(workspace?.services.subscribeClosed ?? noClientSubscription,
+    workspace?.services.isClosed ?? noClientClosed, noClientClosed)
   const logoutLock = useRef(false)
   const clients = useRef(new Set<FutebolApiServices>())
   const generation = useRef(0)
+  const checkedRefresh = useRef(refreshEpoch)
   const closePrivateRequests = useCallback(() => {
     generation.current++
     for (const client of clients.current) client.close()
@@ -82,6 +92,39 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
     }
     return () => channel?.close()
   }, [session, closePrivateRequests, probe])
+  useEffect(() => {
+    if (!workspace || workspace.generation !== generation.current || !activeSession) { checkedRefresh.current = refreshEpoch; return }
+    if (checkedRefresh.current === refreshEpoch) return
+    checkedRefresh.current = refreshEpoch
+    const requestGeneration = generation.current
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | undefined
+    const rejectSession = () => {
+      closePrivateRequests(); setWorkspace(null); setStatus('Não foi possível confirmar o acesso. Entre novamente.')
+    }
+    // Only a successful official SDK event triggers this check. The retained
+    // client obtains the renewed access from SDK memory; UUID must stay stable.
+    const checkProfile = (retried = false): void => {
+      if (cancelled || requestGeneration !== generation.current) return
+      void workspace.services.me().then(profile => {
+        if (cancelled || requestGeneration !== generation.current) return
+        if (profile.id !== workspace.internalId) rejectSession()
+        else setStatus(null)
+      }).catch((error: unknown) => {
+        if (cancelled || requestGeneration !== generation.current) return
+        if (error instanceof ApiError && error.status === 503 && !retried) {
+          retryTimer = setTimeout(() => checkProfile(true),2000)
+          return
+        }
+        if (error instanceof ApiError && [401,403].includes(error.status)) rejectSession()
+        else setStatus('Não foi possível confirmar a sessão agora. Tente novamente em instantes.')
+        // Availability failures never authorize new data; the API still requires
+        // fresh G3 per request. Keep a frozen save attempt available for safe retry.
+      })
+    }
+    checkProfile()
+    return () => { cancelled = true; clearTimeout(retryTimer) }
+  }, [refreshEpoch, workspace, activeSession, closePrivateRequests])
 
   async function login(register = false) {
     setStatus(null)
@@ -114,7 +157,7 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
       if (repeated.id !== profile.id) throw new Error('inconsistent_profile')
       if (requestGeneration === generation.current) {
         retained = true; probe.close()
-        setWorkspace({ services: client, internalId: profile.id })
+        setWorkspace({ services: client, internalId: profile.id, generation: requestGeneration })
       }
     } catch (error) {
       if (requestGeneration === generation.current) setStatus(error instanceof ApiError && error.status === 401
@@ -130,11 +173,11 @@ function DevHome({ session, failed, probe, probeStatus }: { session: Session; fa
       if (access) await probe.start(access, await auth.getIdToken())
     } catch { setStatus('Não foi possível iniciar o diagnóstico. Dados bloqueados.') }
   }
-  if (workspace && activeSession) return <DevWorkspace services={workspace.services} internalId={workspace.internalId}
-    onLogout={logout} loggingOut={loggingOut} />
+  if (workspace && !workspaceClosed && activeSession) return <DevWorkspace services={workspace.services} internalId={workspace.internalId}
+    onLogout={logout} loggingOut={loggingOut} sessionNotice={status} />
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="#/">⚽ Futebol</a><span>DEV</span></header>
-    <main className="main-content"><section className="hero-card">
+    <main className="main-content"><PwaUpdate pending={busy || loggingOut} /><section className="hero-card">
       <p className="eyebrow">Sabará ID · Ambiente de teste</p>
       <h1>Seu Futebol com Sabará ID.</h1>
       <p>Integração DEV em validação. Os grupos e as partidas serão liberados após os testes de acesso.</p>

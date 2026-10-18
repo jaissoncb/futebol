@@ -14,6 +14,7 @@ export default defineConfig(({ command, mode }) => {
   }
   return {
     base: '/',
+    server: { watch: { ignored: ['**/dist-dev/**'] } },
     plugins: [
       ...(mode === 'kinde-dev' ? [{
         name: 'futebol-kinde-dev-entry',
