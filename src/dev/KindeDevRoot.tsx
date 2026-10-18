@@ -10,6 +10,7 @@ import { DevWorkspace } from './DevWorkspace'
 import { accountPortalUrl, kindeTestConfig } from './kinde-test-config'
 import { createG3BrowserProbe } from './g3-probe'
 import { PwaUpdate } from '../PwaUpdate'
+import { StabilizationPanel } from './StabilizationPanel'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
@@ -66,7 +67,7 @@ function DevHome({ session, failed, probe, probeStatus, refreshEpoch }: { sessio
   const [busy, setBusy] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
   const [locallySignedOut, setLocallySignedOut] = useState(false)
-  const activeSession = auth.isAuthenticated && !locallySignedOut
+  const activeSession = auth.isAuthenticated && !locallySignedOut && !failed
   const [workspace, setWorkspace] = useState<{ services: FutebolApiServices; internalId: string; generation: number } | null>(null)
   const workspaceClosed = useSyncExternalStore(workspace?.services.subscribeClosed ?? noClientSubscription,
     workspace?.services.isClosed ?? noClientClosed, noClientClosed)
@@ -174,7 +175,8 @@ function DevHome({ session, failed, probe, probeStatus, refreshEpoch }: { sessio
     } catch { setStatus('Não foi possível iniciar o diagnóstico. Dados bloqueados.') }
   }
   if (workspace && !workspaceClosed && activeSession) return <DevWorkspace services={workspace.services} internalId={workspace.internalId}
-    onLogout={logout} loggingOut={loggingOut} sessionNotice={status} />
+    onLogout={logout} loggingOut={loggingOut} sessionNotice={status}
+    diagnostics={<StabilizationPanel active={activeSession} getAccessToken={auth.getAccessToken} refreshEpoch={refreshEpoch} privateRead={workspace.services.stabilizationRead} />} />
   return <div className="app-shell">
     <header className="topbar"><a className="brand" href="#/">⚽ Futebol</a><span>DEV</span></header>
     <main className="main-content"><PwaUpdate pending={busy || loggingOut} /><section className="hero-card">
@@ -193,6 +195,7 @@ function DevHome({ session, failed, probe, probeStatus, refreshEpoch }: { sessio
       </>}
       {status ? <p role="status">{status}</p> : null}
       {probeStatus ? <p role="status">{probeStatus}</p> : null}
+      <StabilizationPanel active={activeSession} getAccessToken={auth.getAccessToken} refreshEpoch={refreshEpoch} />
       <p><a href={accountPortalUrl} rel="noopener noreferrer" target="_blank">Gerenciar minha conta Sabará</a></p>
       <p className="helper-text">Ao recarregar ou abrir outra aba, pode ser necessário entrar novamente.</p>
     </section></main>

@@ -1,3 +1,4 @@
+// @vitest-environment-options {"url":"http://localhost:5173/"}
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
@@ -183,5 +184,21 @@ describe('Futebol Kinde DEV boundary', () => {
     expect(calls).toBe(4)
     expect(screen.getByRole('button', {name:'Criar grupo'})).toBeVisible()
     expect(transport.mock.calls.every(([,options]) => !options?.method || options.method === 'GET')).toBe(true)
+  })
+  it('closes private data on SDK refresh error even if its authenticated flag is stale', async () => {
+    const transport=vi.fn<typeof fetch>().mockImplementation(url=>Promise.resolve(Response.json(
+      (url as URL).pathname==='/workspace'?{groups:[],players:[]}:{id:'d0000000-0000-0000-0000-000000000001',display_name:null})))
+    vi.stubGlobal('fetch',transport)
+    const session=configureKindeSession()
+    const destroy=vi.spyOn(session.transaction,'destroySession')
+    render(<KindeDevRoot session={session}/> )
+    await userEvent.setup().click(screen.getByRole('button',{name:'Verificar acesso ao Futebol'}))
+    await screen.findByRole('button',{name:'Criar grupo'})
+    const callbacks=mocks.provider.mock.lastCall![0].callbacks as {onError:(failure:{error:string;errorDescription:string},state:unknown,context:typeof mocks.auth)=>void}
+    await act(async()=>{callbacks.onError({error:'ERR_REFRESH_TOKEN',errorDescription:'synthetic unavailable'}, {}, mocks.auth);await Promise.resolve()})
+    expect(destroy).toHaveBeenCalled()
+    expect(screen.queryByRole('button',{name:'Criar grupo'})).not.toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'Entrar com Sabará ID'})).toBeVisible()
+    expect(screen.queryByRole('button',{name:'Verificar acesso ao Futebol'})).not.toBeInTheDocument()
   })
 })

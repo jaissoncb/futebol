@@ -15,6 +15,32 @@ const now = Math.floor(Date.now() / 1000)
 const claims = { iss: g3Policy.issuer, aud: g3Policy.audience, azp: g3Policy.clientId,
   sub: 'synthetic-g3-user', amr: ['pwd'], auth_time: now - 300, iat: now, exp: now + 600 }
 const ok = () => Response.json({ sub: claims.sub, ignored_pii: 'synthetic-only' })
+void test('zero positive cache TTL repeats full userinfo proof and never enables stale fallback', async () => {
+  let calls = 0
+  const proof = createUserinfoProof({ cacheTtlMs: 0, fetch: () => {
+    calls++; return Promise.resolve(calls === 3 ? new Response(null,{status:503}) : ok())
+  } })
+  assert.equal(await proof(claims,'Bearer fixture-fresh'),true)
+  assert.equal(await proof(claims,'Bearer fixture-fresh'),true)
+  await assert.rejects(proof(claims,'Bearer fixture-fresh'),IdentityUnavailableError)
+  assert.equal(calls,3)
+  assert.throws(() => createUserinfoProof({cacheTtlMs:60001 as 60000}),/invalid_cache_ttl/)
+})
+void test('sanitized transport observations distinguish DNS TLS timeout and malformed body', async () => {
+  for (const [code,category] of [['EAI_AGAIN','dns'],['CERT_HAS_EXPIRED','tls'],['ECONNRESET','reset']]) {
+    const events: unknown[] = []
+    const proof = createUserinfoProof({onUnavailable:event=>events.push(event),
+      fetch:()=>Promise.reject(new Error('PRIVATE_FIXTURE',{cause:{code}}))})
+    await assert.rejects(proof(claims,'Bearer PRIVATE_TOKEN_FIXTURE'),IdentityUnavailableError)
+    assert.equal((events[0] as {category:string}).category,category)
+    assert.ok(!JSON.stringify(events).includes('PRIVATE_'))
+  }
+  const events: unknown[] = []
+  await assert.rejects(createUserinfoProof({onUnavailable:event=>events.push(event),
+    fetch:()=>Promise.resolve(new Response('{',{headers:{'content-type':'application/json'}}))})(claims,'Bearer fixture'),IdentityUnavailableError)
+  assert.equal((events[0] as {category:string}).category,'json')
+  assert.equal((events[0] as {phase:string}).phase,'body')
+})
 async function sign(overrides: Record<string, unknown> = {}, header: Record<string, unknown> = {}) {
   return new SignJWT({ ...claims, ...overrides }).setProtectedHeader({ alg: 'RS256', kid: 'g3-fixture', ...header }).sign(keys.privateKey)
 }

@@ -8,10 +8,15 @@ import { assertDevReadiness } from './dev-readiness.ts'
 import { neonDevTarget } from './neon-dev-target.ts'
 import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
 import { readSecretInput } from './secret-input.ts'
+import { createStabilizationValidation } from './stabilization.ts'
+import { HttpError } from './server.ts'
+import { createNativeUserinfoFetch } from './userinfo-https.ts'
 
 const record = (event: Record<string, string | number | boolean>) => appendFileSync(
   'D:/Projetos/_Handoff/Futebol/FUTEBOL_API_NEON_EVIDENCIAS_2026-10-18.jsonl',
   `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`)
+const stabilizing = process.argv.includes('--stabilize')
+const transportTrial = stabilizing && process.argv.includes('--transport-trial')
 let stage = 'readiness'
 try {
   assertDevReadiness()
@@ -42,14 +47,16 @@ try {
     event: 'runtime_userinfo_confirmed', source: proof.source, elapsedMs: proof.elapsedMs,
     sameBearer: true, subjectMatches: true,
   }) })
+  const stabilizationValidation = stabilizing ? createStabilizationValidation(record,fetch,undefined,
+    transportTrial ? createNativeUserinfoFetch(record) : undefined) : undefined
   let lastAcceptedAccessDigest: string | undefined
   const dispatch = createDatabaseDispatch(pool)
   const identities = new Map<string, string>()
   const server = createApi({
     health: { status: 'dev', authentication: 'validated-dev' },
-    authenticate: async bearer => {
+    authenticate: async (bearer, url) => {
       try {
-        const principal = await validate(bearer)
+        const principal = await (stabilizationValidation ? stabilizationValidation(bearer, url) : validate(bearer))
         const digest = createHash('sha256').update(bearer ?? '').digest('hex')
         record({ event: 'runtime_g3_accepted', fullContractVerified: true,
           priorAccessObserved: lastAcceptedAccessDigest !== undefined,
@@ -64,7 +71,18 @@ try {
       }
     },
     dispatch: async (principal, method, path, body) => {
+      if (path.pathname === '/__dev/stabilization') {
+        if (!stabilizing || method !== 'GET') throw new HttpError(404, 'not_found')
+        record({ event: 'stabilization_probe_accepted', phase: path.searchParams.get('phase') ?? '',
+          mode: path.searchParams.get('mode') ?? '', databaseDispatched: false })
+        return { accepted: true, databaseDispatched: false }
+      }
       const result = await dispatch(principal, method, path, body)
+      if (stabilizing && method === 'GET' && path.pathname === '/workspace' && path.searchParams.get('__dev_delay') === '1') {
+        record({event:'stabilization_private_read_pending',sqlReadCompleted:true})
+        await new Promise(resolve=>setTimeout(resolve,8000))
+        record({event:'stabilization_private_read_released',privateResponseLogged:false})
+      }
       const operation = method === 'POST' && path.pathname === '/groups' ? 'group_create'
         : method === 'PATCH' && /^\/groups\/[^/]+$/.test(path.pathname) ? 'group_update'
           : method === 'POST' && /^\/groups\/[^/]+\/players$/.test(path.pathname) ? 'player_create'
@@ -96,6 +114,14 @@ try {
     record({ event: 'runtime_ready', restrictedRoleVerified: true, g3EvidenceVerified: true })
     console.log('Futebol API + Neon DEV ready; per-request G3 and RLS required')
   })
+  // A bounded stabilization run self-closes normally, allowing the provisioner
+  // to remove its temporary login without forced process termination.
+  if (stabilizing) setTimeout(() => {
+    if (stopping) return
+    stopping = true
+    record({event:'stabilization_budget_finished',budgetMinutes:transportTrial?5:20})
+    server.closeAllConnections(); server.close(endPool)
+  },(transportTrial?5:20)*60*1000).unref()
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) process.on(signal, () => {
     if (stopping) return
     stopping = true

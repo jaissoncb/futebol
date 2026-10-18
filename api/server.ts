@@ -5,7 +5,7 @@ import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
 
 export interface ApiDependencies {
   health?: { status: 'dev'; authentication: 'gated' | 'validated-dev' }
-  authenticate: (authorization: string | undefined) => Promise<Principal>
+  authenticate: (authorization: string | undefined, url: URL) => Promise<Principal>
   dispatch: (principal: Principal, method: string, url: URL, body: unknown) => Promise<unknown>
 }
 export class HttpError extends Error {
@@ -60,7 +60,7 @@ export function createApi(dependencies: ApiDependencies) {
       // Authenticate before body parsing and, critically, before DB dispatch/bootstrap.
       if (request.rawHeaders.filter((_, index) => index % 2 === 0)
         .filter(name => name.toLowerCase() === 'authorization').length !== 1) throw new AuthenticationError()
-      const principal = await dependencies.authenticate(request.headers.authorization)
+      const principal = await dependencies.authenticate(request.headers.authorization, url)
       const body = await readBody(request)
       reply(response, 200, await dependencies.dispatch(principal, request.method ?? '', url, body))
     })().catch((error: unknown) => {

@@ -1,4 +1,4 @@
-param([ValidateSet('test','api')][string]$Mode = 'test')
+param([ValidateSet('test','api','stabilize','transport')][string]$Mode = 'test')
 $ErrorActionPreference = 'Stop'
 $Host.UI.RawUI.WindowTitle = ('Futebol Neon DEV — ' + $Mode)
 $taskRoot = 'D:\Projetos\Futebol'
@@ -19,7 +19,9 @@ try {
     $taskStart.FileName = (Get-Command node).Source
     $taskStart.WorkingDirectory = $taskRoot
     $taskStart.ArgumentList.Add('--experimental-strip-types')
-    $taskStart.ArgumentList.Add($(if($Mode -eq 'api'){'scripts/start-neon-dev.ts'}else{'scripts/test-neon-dev.ts'}))
+    $taskStart.ArgumentList.Add($(if($Mode -in @('api','stabilize','transport')){'scripts/start-neon-dev.ts'}else{'scripts/test-neon-dev.ts'}))
+    if ($Mode -in @('stabilize','transport')) { $taskStart.ArgumentList.Add('--stabilize') }
+    if ($Mode -eq 'transport') { $taskStart.ArgumentList.Add('--transport-trial') }
     $taskStart.UseShellExecute = $false
     $taskStart.RedirectStandardInput = $true
     $taskProcess = [Diagnostics.Process]::Start($taskStart)

@@ -16,13 +16,17 @@ const record = (event: Record<string, string | number | boolean>) => appendFileS
 let created = false
 const login = `futebol_api_dev_${randomBytes(8).toString('hex')}`
 let migration: ReturnType<typeof createRuntimePool> | undefined
+const stabilizing = process.argv.includes('--stabilize')
 try {
   assertG3Readiness()
+  // Stabilization reuses retained data and never invokes empty-database suites.
+  if (stabilizing) assertDevReadiness()
   const url = validateNeonDevConnection(await readSecretInput())
   // Revalidate the native suite only when its latest evidence is missing/failed.
   // Its empty-database check refuses to modify a database containing app data.
   try { assertDevReadiness() }
   catch {
+    if (stabilizing) throw new Error('stabilization_readiness_required')
     const native = spawn(process.execPath, ['--experimental-strip-types', 'scripts/test-neon-dev.ts'], {
       cwd: 'D:/Projetos/Futebol', stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true,
     })
@@ -45,9 +49,12 @@ try {
   url.username = login; url.password = password; url.hostname = neonDevTarget.pooledHost
   const testRuntime = createRuntimePool(url.href)
   testRuntime.on('error', () => record({ event: 'preflight_runtime_connection_unavailable' }))
-  try { await runNeonDomainPreflight(migration, testRuntime, record) }
+  try {
+    if (!stabilizing) await runNeonDomainPreflight(migration, testRuntime, record)
+    else record({ event: 'stabilization_existing_data_preserved', nativeSuiteRun: false, domainFixturesRun: false })
+  }
   finally { await testRuntime.end() }
-  const child = spawn(process.execPath, ['--experimental-strip-types', 'api/runtime-dev.ts'], {
+  const child = spawn(process.execPath, ['--experimental-strip-types', 'api/runtime-dev.ts', ...(stabilizing ? ['--stabilize'] : []), ...(process.argv.includes('--transport-trial')?['--transport-trial']:[])], {
     cwd: 'D:/Projetos/Futebol', stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true,
     env: Object.fromEntries(['SystemRoot','WINDIR','PATH','TEMP','TMP']
       .flatMap(key => process.env[key] === undefined ? [] : [[key, process.env[key]]])),

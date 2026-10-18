@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { JWTPayload, JWTVerifyGetKey } from 'jose'
 import { AuthenticationError, createTokenValidator, IdentityUnavailableError } from './auth.ts'
+import { transportCategory, type TransportCategory } from './transport-category.ts'
 
 export const g3Policy = Object.freeze({
   issuer: 'https://sabara-test.eu.kinde.com',
@@ -20,13 +21,18 @@ const sha256 = (value: string) => createHash('sha256').update(value).digest('hex
 export interface ProofEvent {
   source: 'remote' | 'cache' | 'concurrent'
   elapsedMs: number
+  headersMs?: number
+  bodyMs?: number
 }
 interface ProofOptions {
   fetch?: typeof fetch
   now?: () => number
   timeoutMs?: number
+  // DEV measurement may disable positive caching; it cannot lengthen the TTL.
+  cacheTtlMs?: 0 | 60000
   onProof?: (event: ProofEvent) => void
-  onUnavailable?: (event: { reason: 'timeout' | 'unavailable'; elapsedMs: number }) => void
+  onUnavailable?: (event: { reason: 'timeout' | 'unavailable'; elapsedMs: number;
+    phase: 'headers' | 'body'; category: TransportCategory | 'upstream_http' | 'rate_limited' | 'content' | 'json' | 'body_limit'; httpStatus?: number }) => void
 }
 
 // No configurable endpoint, bearer logging, negative cache or stale fallback.
@@ -35,7 +41,9 @@ export function createUserinfoProof(options: ProofOptions = {}) {
   const request = options.fetch ?? fetch
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? 2000
+  const cacheTtlMs = options.cacheTtlMs ?? 60000
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) throw new Error('invalid_timeout')
+  if (cacheTtlMs !== 0 && cacheTtlMs !== 60000) throw new Error('invalid_cache_ttl')
   const cache = new Map<string, { context: string; until: number }>()
   const inFlight = new Map<string, { context: string; work: Promise<boolean> }>()
   return async (claims: Readonly<JWTPayload>, bearer: string): Promise<boolean> => {
@@ -64,6 +72,10 @@ export function createUserinfoProof(options: ProofOptions = {}) {
     }
     if (inFlight.size >= MAX_IN_FLIGHT) throw new IdentityUnavailableError()
     const started = now()
+    let phase: 'headers' | 'body' = 'headers'
+    let headersMs = 0
+    let failureCategory: TransportCategory | 'upstream_http' | 'rate_limited' | 'content' | 'json' | 'body_limit' = 'transport'
+    let httpStatus: number | undefined
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     const timeout = new Promise<never>((_, reject) => {
@@ -74,8 +86,11 @@ export function createUserinfoProof(options: ProofOptions = {}) {
         method: 'GET', headers: { Authorization: bearer, Accept: 'application/json' },
         redirect: 'error', credentials: 'omit', signal: controller.signal,
       })
+      headersMs = Math.max(0, now() - started)
+      httpStatus = response.status
       if (controller.signal.aborted) throw new IdentityUnavailableError()
       if (response.status !== 200) {
+        failureCategory = response.status === 429 ? 'rate_limited' : 'upstream_http'
         await response.body?.cancel()
         if ([400, 401, 403].includes(response.status)) throw new AuthenticationError()
         throw new IdentityUnavailableError()
@@ -84,10 +99,12 @@ export function createUserinfoProof(options: ProofOptions = {}) {
         || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')
         || Number(response.headers.get('content-length') ?? 0) > MAX_BODY
         || !response.body) {
+        failureCategory = 'content'
         await response.body?.cancel()
         throw new IdentityUnavailableError()
       }
       const reader = response.body.getReader()
+      phase = 'body'
       const cancelReader = () => { void reader.cancel().catch(() => undefined) }
       controller.signal.addEventListener('abort', cancelReader, { once: true })
       const chunks: Uint8Array[] = []
@@ -99,13 +116,14 @@ export function createUserinfoProof(options: ProofOptions = {}) {
           const bytes: unknown = chunk.value
           if (!(bytes instanceof Uint8Array)) throw new IdentityUnavailableError()
           size += bytes.byteLength
-          if (size > MAX_BODY) throw new IdentityUnavailableError()
+          if (size > MAX_BODY) { failureCategory = 'body_limit'; throw new IdentityUnavailableError() }
           chunks.push(bytes)
         }
       } finally {
         controller.signal.removeEventListener('abort', cancelReader)
         await reader.cancel()
       }
+      failureCategory = 'json'
       const profile: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
       if (!profile || typeof profile !== 'object' || Array.isArray(profile)
         || !('sub' in profile) || typeof profile.sub !== 'string' || !profile.sub.trim()) throw new IdentityUnavailableError()
@@ -113,16 +131,19 @@ export function createUserinfoProof(options: ProofOptions = {}) {
       if (controller.signal.aborted) throw new IdentityUnavailableError()
       if ((claims.exp as number) * 1000 <= now()) throw new AuthenticationError()
       // Start TTL at request start so remote latency cannot extend confirmation.
-      const until = Math.min(started + 60000, (claims.exp as number) * 1000)
+      const until = Math.min(started + cacheTtlMs, (claims.exp as number) * 1000)
       if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value as string)
       if (until > now()) cache.set(key, { context, until })
-      options.onProof?.({ source: 'remote', elapsedMs: Math.max(0, now() - started) })
+      options.onProof?.({ source: 'remote', elapsedMs: Math.max(0, now() - started),
+        headersMs, bodyMs: Math.max(0, now() - started - headersMs) })
       return true
     }
     const work = Promise.race([remote(), timeout]).catch((error: unknown) => {
       if (error instanceof AuthenticationError) throw error
       options.onUnavailable?.({ reason: controller.signal.aborted ? 'timeout' : 'unavailable',
-        elapsedMs: Math.max(0, now() - started) })
+        elapsedMs: Math.max(0, now() - started), phase,
+        category: controller.signal.aborted ? 'timeout' : failureCategory === 'transport' ? transportCategory(error) : failureCategory,
+        ...(httpStatus === undefined ? {} : { httpStatus }) })
       throw new IdentityUnavailableError('userinfo', controller.signal.aborted ? 'timeout' : 'unavailable')
     }).finally(() => {
       clearTimeout(timer); controller.abort(); inFlight.delete(key)

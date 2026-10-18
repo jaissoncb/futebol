@@ -21,6 +21,7 @@ export function createFutebolApiServices(getAccessToken: () => Promise<string | 
       return profile
     },
     workspace: () => client.request<GroupWorkspaceData>('/workspace'),
+    stabilizationRead: () => client.request<GroupWorkspaceData>('/workspace?__dev_delay=1'),
     async createGroup(input: GroupInput) {
       const response = await client.request<{ id: string }>('/groups', 'POST', input)
       return id(response.id)

@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { GroupDashboard } from '../groups/GroupDashboard'
 import { PwaUpdate } from '../PwaUpdate'
 import type { FutebolApiServices } from '../lib/api/services'
 import { accountPortalUrl } from './kinde-test-config'
 
-export function DevWorkspace({ services, internalId, onLogout, loggingOut, sessionNotice }: {
-  services: FutebolApiServices; internalId: string; onLogout: () => Promise<void>; loggingOut: boolean; sessionNotice?: string | null
+export function DevWorkspace({ services, internalId, onLogout, loggingOut, sessionNotice, diagnostics }: {
+  services: FutebolApiServices; internalId: string; onLogout: () => Promise<void>; loggingOut: boolean; sessionNotice?: string | null; diagnostics?: ReactNode
 }) {
   const [pending, setPending] = useState(false)
   return <div className="app-shell">
@@ -16,6 +16,7 @@ export function DevWorkspace({ services, internalId, onLogout, loggingOut, sessi
     </header>
     <main className="main-content"><PwaUpdate pending={pending} />
       {sessionNotice ? <p role="status">{sessionNotice}</p> : null}
+      {diagnostics}
       <GroupDashboard key={internalId} client={services} userId={internalId} onAttemptChange={setPending} />
     </main>
     <footer className="footer"><a href={accountPortalUrl} rel="noopener noreferrer" target="_blank"
