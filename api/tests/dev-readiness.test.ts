@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { verifyDevReadiness } from '../dev-readiness.ts'
+import { verifyDevReadiness, verifyG3Readiness } from '../dev-readiness.ts'
 const native = { projectId: 'ancient-wildflower-55433050', branch: 'dev', pooled: true, tls: 'verify-full',
   tests: ['connection_preflight','restricted_native_login','bootstrap_20_concurrent','native_rls_and_transactions',
     'pooled_30_requests_actor_isolation','disabled_user_rejected','cleanup_ephemeral_login_and_fixtures']
@@ -25,4 +25,14 @@ void test('DEV database entry requires positive initial AND SDK-renewed proof pl
     { ...native, tls: 'require' }, { ...native, tests: native.tests.map(test => ({ ...test, status: 'FAIL' })) }]) {
     assert.throws(() => verifyDevReadiness(lines, invalid), /dev_evidence_pending/)
   }
+})
+void test('valid G3 can precede native revalidation but never opens data with failed or mixed native evidence', () => {
+  assert.doesNotThrow(() => verifyG3Readiness(lines))
+  assert.throws(() => verifyG3Readiness(lines.slice(0, 7)), /dev_evidence_pending/)
+  assert.throws(() => verifyDevReadiness(lines, { ...native, tests: [
+    ...native.tests, { name: 'connection_preflight', status: 'FAIL' },
+  ] }), /dev_evidence_pending/)
+  assert.throws(() => verifyDevReadiness(lines, { ...native, tests: [
+    { name: 'connection_preflight', status: 'FAIL' }, { name: 'cleanup_ephemeral_login_and_fixtures', status: 'PASS' },
+  ] }), /dev_evidence_pending/)
 })

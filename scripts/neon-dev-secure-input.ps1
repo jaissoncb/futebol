@@ -8,7 +8,11 @@ Write-Host 'No console Neon: projeto futebol-dev-20261018, branch dev, banco fut
 Write-Host 'Copie a connection string PostgreSQL para o campo oculto abaixo. Não cole no chat.'
 $taskSecret = Read-Host 'Connection string DEV (entrada oculta)' -AsSecureString
 $taskPointer = [IntPtr]::Zero
+$taskMutex = [Threading.Mutex]::new($false, 'Local\FutebolNeonDevSecretRunner')
+$taskLockHeld = $false
 try {
+    try { $taskLockHeld = $taskMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $taskLockHeld = $true }
+    if (-not $taskLockHeld) { throw 'Outro runner Futebol Neon DEV está ativo; nenhuma operação foi iniciada.' }
     $taskPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($taskSecret)
     $taskConnection = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($taskPointer)
     $taskStart = [Diagnostics.ProcessStartInfo]::new()
@@ -25,6 +29,8 @@ try {
     $taskProcess.WaitForExit()
     Write-Host ('Runner encerrado. Exit code: ' + $taskProcess.ExitCode)
 } finally {
+    if ($taskLockHeld) { $taskMutex.ReleaseMutex() }
+    $taskMutex.Dispose()
     if ($taskPointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($taskPointer) }
     $taskSecret.Dispose()
     Remove-Variable taskConnection -ErrorAction SilentlyContinue

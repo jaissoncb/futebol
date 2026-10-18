@@ -1,23 +1,39 @@
-import { readFileSync, appendFileSync } from 'node:fs'
+import { appendFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { once } from 'node:events'
 import { createRuntimePool } from '../api/database.ts'
 import { neonDevTarget, validateNeonDevConnection } from '../api/neon-dev-target.ts'
-import { assertDevReadiness } from '../api/dev-readiness.ts'
+import { assertDevReadiness, assertG3Readiness } from '../api/dev-readiness.ts'
 import { runNeonDomainPreflight } from './neon-domain-preflight.ts'
+import { readSecretInput } from '../api/secret-input.ts'
 
 // Provisioner is a separate process. Migration credential is never inherited by
 // the HTTP API; only a fresh, restricted runtime DSN travels over the child stdin.
-const record = (event: Record<string, string | boolean>) => appendFileSync(
+const record = (event: Record<string, string | number | boolean>) => appendFileSync(
   'D:/Projetos/_Handoff/Futebol/FUTEBOL_API_NEON_EVIDENCIAS_2026-10-18.jsonl',
   `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`)
 let created = false
 const login = `futebol_api_dev_${randomBytes(8).toString('hex')}`
 let migration: ReturnType<typeof createRuntimePool> | undefined
 try {
-  assertDevReadiness()
-  const url = validateNeonDevConnection(readFileSync(0, 'utf8').trim())
+  assertG3Readiness()
+  const url = validateNeonDevConnection(await readSecretInput())
+  // Revalidate the native suite only when its latest evidence is missing/failed.
+  // Its empty-database check refuses to modify a database containing app data.
+  try { assertDevReadiness() }
+  catch {
+    const native = spawn(process.execPath, ['--experimental-strip-types', 'scripts/test-neon-dev.ts'], {
+      cwd: 'D:/Projetos/Futebol', stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true,
+    })
+    const completed = once(native, 'exit')
+    native.stdin.on('error', () => record({ event: 'native_stdin_unavailable' }))
+    native.stdin.end(url.href)
+    const [code] = await completed as [number | null, string | null]
+    record({ event: 'native_revalidation_finished', exitCode: code ?? -1 })
+    if (code !== 0) throw new Error('native_revalidation_failed')
+    assertDevReadiness()
+  }
   migration = createRuntimePool(url.href)
   migration.on('error', () => record({ event: 'migration_connection_unavailable' }))
   const actual = await migration.query<{ database: string; role: string }>('select current_database() as database,current_user as role')
@@ -37,12 +53,14 @@ try {
       .flatMap(key => process.env[key] === undefined ? [] : [[key, process.env[key]]])),
   })
   const closed = once(child, 'exit')
+  child.stdin.on('error', () => record({ event: 'runtime_stdin_unavailable' }))
   child.stdin.end(url.href)
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) process.on(signal, () => {
     if (!child.killed) child.kill()
   })
-  await closed
-  record({ event: 'runtime_child_stopped' })
+  const [code] = await closed as [number | null, string | null]
+  record({ event: 'runtime_child_stopped', exitCode: code ?? -1 })
+  if (code !== 0) throw new Error('runtime_child_failed')
 } catch {
   record({ event: 'runtime_provision_failed', secretsSuppressed: true })
   console.log('Futebol runtime provisioning failed; no credential details logged')

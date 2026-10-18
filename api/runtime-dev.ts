@@ -1,4 +1,4 @@
-import { readFileSync, appendFileSync } from 'node:fs'
+import { appendFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { createRuntimePool, assertRuntimeRole, assertDatabaseBoundary } from './database.ts'
 import { createDatabaseDispatch } from './routes.ts'
@@ -7,14 +7,17 @@ import { createApi } from './server.ts'
 import { assertDevReadiness } from './dev-readiness.ts'
 import { neonDevTarget } from './neon-dev-target.ts'
 import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
+import { readSecretInput } from './secret-input.ts'
 
 const record = (event: Record<string, string | number | boolean>) => appendFileSync(
   'D:/Projetos/_Handoff/Futebol/FUTEBOL_API_NEON_EVIDENCIAS_2026-10-18.jsonl',
   `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`)
+let stage = 'readiness'
 try {
   assertDevReadiness()
-  const input = readFileSync(0, 'utf8').trim()
-  if (input.length > 16384) throw new Error('invalid_runtime_config')
+  stage = 'stdin'
+  const input = await readSecretInput()
+  stage = 'target'
   const url = new URL(input)
   if (!['postgres:', 'postgresql:'].includes(url.protocol) || url.hostname !== neonDevTarget.pooledHost
     || url.pathname !== '/futebol_dev' || !/^futebol_api_dev_[a-f0-9]{16}$/.test(decodeURIComponent(url.username))
@@ -23,15 +26,37 @@ try {
   url.searchParams.set('sslmode', 'verify-full')
   const pool = createRuntimePool(url.href)
   pool.on('error', () => record({ event: 'runtime_pool_unavailable' }))
-  try { await assertRuntimeRole(pool); await assertDatabaseBoundary(pool) }
-  catch { await pool.end(); throw new Error('unsafe_runtime_role') }
-  const validate = createG3Validator({ timeoutMs: 5000 })
+  try {
+    stage = 'runtime_role'; await assertRuntimeRole(pool)
+    stage = 'database_boundary'; await assertDatabaseBoundary(pool)
+  }
+  catch (error) {
+    const known = ['42501','28P01','08006','ECONNREFUSED','ECONNRESET','ETIMEDOUT','EAI_AGAIN','ENOTFOUND',
+      'CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE','SELF_SIGNED_CERT_IN_CHAIN']
+    const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      && known.includes(error.code) ? error.code : 'UNCLASSIFIED'
+    record({ event: 'runtime_boundary_failed', stage, code })
+    await pool.end(); throw new Error('unsafe_runtime_role', { cause: error })
+  }
+  const validate = createG3Validator({ timeoutMs: 5000, onProof: proof => record({
+    event: 'runtime_userinfo_confirmed', source: proof.source, elapsedMs: proof.elapsedMs,
+    sameBearer: true, subjectMatches: true,
+  }) })
+  let lastAcceptedAccessDigest: string | undefined
   const dispatch = createDatabaseDispatch(pool)
   const identities = new Map<string, string>()
   const server = createApi({
     health: { status: 'dev', authentication: 'validated-dev' },
     authenticate: async bearer => {
-      try { return await validate(bearer) }
+      try {
+        const principal = await validate(bearer)
+        const digest = createHash('sha256').update(bearer ?? '').digest('hex')
+        record({ event: 'runtime_g3_accepted', fullContractVerified: true,
+          priorAccessObserved: lastAcceptedAccessDigest !== undefined,
+          tokenChanged: lastAcceptedAccessDigest !== undefined && lastAcceptedAccessDigest !== digest })
+        lastAcceptedAccessDigest = digest
+        return principal
+      }
       catch (error) {
         record({ event: 'auth_denied_before_sql', httpStatus: error instanceof AuthenticationError ? 401 : 503,
           dependency: error instanceof IdentityUnavailableError ? error.dependency : 'token' })
@@ -40,6 +65,14 @@ try {
     },
     dispatch: async (principal, method, path, body) => {
       const result = await dispatch(principal, method, path, body)
+      const operation = method === 'POST' && path.pathname === '/groups' ? 'group_create'
+        : method === 'PATCH' && /^\/groups\/[^/]+$/.test(path.pathname) ? 'group_update'
+          : method === 'POST' && /^\/groups\/[^/]+\/players$/.test(path.pathname) ? 'player_create'
+            : method === 'PATCH' && /^\/players\/[^/]+$/.test(path.pathname) ? 'player_update'
+              : method === 'PUT' && /^\/matches\/[^/]+\/draw$/.test(path.pathname) ? 'draw_save'
+                : method === 'GET' && /^\/groups\/[^/]+\/matches\/[^/]+$/.test(path.pathname) ? 'match_graph_read'
+                  : method === 'GET' && /^\/groups\/[^/]+\/matches$/.test(path.pathname) ? 'history_read' : undefined
+      if (operation) record({ event: 'domain_request_completed', operation, httpStatus: 200 })
       if (path.pathname === '/me' && result && typeof result === 'object' && 'id' in result && typeof result.id === 'string') {
         const key = createHash('sha256').update(JSON.stringify([principal.issuer, principal.subject])).digest('hex')
         const prior = identities.get(key)
@@ -58,6 +91,7 @@ try {
     void pool.end().catch(() => record({ event: 'runtime_pool_close_failed' }))
   }
   server.on('error', () => { record({ event: 'runtime_listen_failed' }); endPool(); process.exitCode = 1 })
+  stage = 'listen'
   server.listen(8787, 'localhost', () => {
     record({ event: 'runtime_ready', restrictedRoleVerified: true, g3EvidenceVerified: true })
     console.log('Futebol API + Neon DEV ready; per-request G3 and RLS required')
@@ -68,6 +102,7 @@ try {
     server.closeAllConnections(); server.close(endPool)
   })
 } catch {
+  record({ event: 'runtime_start_failed', stage, secretsSuppressed: true })
   console.log('Futebol DEV runtime not started; configuration/evidence unavailable')
   process.exitCode = 1
 }

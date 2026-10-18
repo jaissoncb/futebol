@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, appendFileSync, existsSync } from 'node:fs'
 import type { Pool } from 'pg'
 import { assertRuntimeRole, createRuntimePool, withActor } from '../api/database.ts'
 import { neonDevTarget, validateNeonDevConnection } from '../api/neon-dev-target.ts'
+import { readSecretInput } from '../api/secret-input.ts'
 
 // Only the endpoint just created/read back in the authenticated Free console.
 // Credentials arrive on stdin from the operator's masked prompt, never argv/env/file.
@@ -31,7 +32,7 @@ async function denied(work: Promise<unknown>) {
     && 'code' in error && error.code === '42501'))
 }
 try {
-  const input = readFileSync(0, 'utf8').trim()
+  const input = await readSecretInput()
   const url = validateNeonDevConnection(input)
   migration = createRuntimePool(url.href)
   const actual = await migration.query<{ database: string; role: string; empty: boolean }>(`select current_database() as database,
@@ -110,7 +111,11 @@ try {
     }
   } catch (error) { fail('cleanup_ephemeral_login_and_fixtures', error) }
   await migration?.end()
-  writeFileSync('D:/Projetos/_Handoff/Futebol/FUTEBOL_NEON_NATIVE_EVIDENCIAS_2026-10-18.json',
-    JSON.stringify({ at: new Date().toISOString(), projectId: 'ancient-wildflower-55433050',
-      branch: 'dev', pooled: true, tls: 'verify-full', tests }, null, 2))
+  const latest = 'D:/Projetos/_Handoff/Futebol/FUTEBOL_NEON_NATIVE_EVIDENCIAS_2026-10-18.json'
+  const history = 'D:/Projetos/_Handoff/Futebol/FUTEBOL_NEON_NATIVE_HISTORICO_2026-10-18.jsonl'
+  if (existsSync(latest)) appendFileSync(history, `${JSON.stringify(JSON.parse(readFileSync(latest, 'utf8')))}\n`)
+  const evidence = { at: new Date().toISOString(), projectId: 'ancient-wildflower-55433050',
+    branch: 'dev', pooled: true, tls: 'verify-full', tests }
+  appendFileSync(history, `${JSON.stringify(evidence)}\n`)
+  writeFileSync(latest, JSON.stringify(evidence, null, 2))
 }
