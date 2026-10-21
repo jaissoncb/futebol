@@ -35,9 +35,12 @@ interface ProofOptions {
     phase: 'headers' | 'body'; category: TransportCategory | 'upstream_http' | 'rate_limited' | 'content' | 'json' | 'body_limit'; httpStatus?: number }) => void
 }
 
-// No configurable endpoint, bearer logging, negative cache or stale fallback.
+// Endpoint comes only from trusted runtime configuration, never a request/claim.
 // This is a per-instance proof cache, not a replacement for per-request DB ACLs.
-export function createUserinfoProof(options: ProofOptions = {}) {
+export function createUserinfoProof(options: ProofOptions = {}, endpoint = userinfoUrl) {
+  const target = new URL(endpoint)
+  if (target.protocol !== 'https:' || target.username || target.password || target.search || target.hash
+    || target.pathname !== '/oauth2/v2/user_profile' || target.href !== endpoint) throw new Error('invalid_userinfo_config')
   const request = options.fetch ?? fetch
   const now = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? 2000
@@ -82,7 +85,7 @@ export function createUserinfoProof(options: ProofOptions = {}) {
       timer = setTimeout(() => { controller.abort(); reject(new IdentityUnavailableError()) }, timeoutMs)
     })
     const remote = async () => {
-      const response = await request(userinfoUrl, {
+      const response = await request(endpoint, {
         method: 'GET', headers: { Authorization: bearer, Accept: 'application/json' },
         redirect: 'error', credentials: 'omit', signal: controller.signal,
       })
@@ -95,7 +98,7 @@ export function createUserinfoProof(options: ProofOptions = {}) {
         if ([400, 401, 403].includes(response.status)) throw new AuthenticationError()
         throw new IdentityUnavailableError()
       }
-      if (response.redirected || response.url && response.url !== userinfoUrl
+      if (response.redirected || response.url && response.url !== endpoint
         || !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '')
         || Number(response.headers.get('content-length') ?? 0) > MAX_BODY
         || !response.body) {

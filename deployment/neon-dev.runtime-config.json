@@ -1,0 +1,19 @@
+{
+  "environment": "dev",
+  "allowedOrigin": "http://localhost:5173",
+  "identity": {
+    "issuer": "https://sabara-test.eu.kinde.com",
+    "audience": "urn:sabara:futebol:api:dev",
+    "clientId": "ec7038eb3fba4f958013e0b36437caf1",
+    "jwksUri": "https://sabara-test.eu.kinde.com/.well-known/jwks",
+    "maxLifetimeSeconds": 600,
+    "lifetimeRoundingSeconds": 1,
+    "userinfoUrl": "https://sabara-test.eu.kinde.com/oauth2/v2/user_profile"
+  },
+  "database": {
+    "pooledHost": "ep-small-voice-baiso0c9-pooler.c-8.eu-central-1.aws.neon.tech",
+    "unpooledHost": "ep-small-voice-baiso0c9.c-8.eu-central-1.aws.neon.tech",
+    "name": "futebol_dev",
+    "runtimeRole": "futebol_api_dev_REPLACE_WITH_APPROVED_SUFFIX"
+  }
+}

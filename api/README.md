@@ -1,5 +1,91 @@
 # Futebol DEV API
 
+## Local Neon Functions port (stage 1, not deployed)
+
+The explicit Function entrypoint is `api/function.ts`, a default object with
+`fetch(Request): Promise<Response>`. It composes once per isolate with the existing
+RS256/JWKS validator, G3 userinfo proof, pg pool and REST database dispatch. It does
+not start `node:http` or import the DEV runners, probes, evidence files, native
+HTTPS experiment, migrations or secret-input scripts. Frontend and CI are unchanged.
+
+Configuration is read only from the operator-controlled process environment:
+
+- `FUTEBOL_RUNTIME_CONFIG`: complete JSON metadata matching `RuntimeConfig` in
+  `runtime-config.ts`. Required keys: `environment` (`dev` or `prd`), `allowedOrigin`
+  (one exact origin, no trailing slash), `identity`, `database`. No defaults.
+- `identity`: `issuer`, `audience`, `clientId`, `jwksUri`, `userinfoUrl`,
+  `maxLifetimeSeconds: 600`, `lifetimeRoundingSeconds: 1`. DEV must match the existing
+  Futebol Test contract in `g3.ts`. PRD requires its own explicit approved metadata;
+  Test issuer/audience/client and loopback origins are refused. This validation
+  does not certify an as-yet unapproved PRD contract. JWKS/userinfo must be the fixed
+  paths on the configured HTTPS issuer origin; no request/claim selects endpoints.
+- `database`: exact `pooledHost`, `unpooledHost`, `name`, `runtimeRole`. Frankfurt
+  Neon endpoint pair (`ep-…-pooler.c-….eu-central-1.aws.neon.tech` and the same host
+  without `-pooler`); database `futebol_<environment>` and login
+  `futebol_api_<environment>_<suffix>`. These naming rules deliberately require
+  explicit environment separation. DEV and PRD must use different destinations.
+- **Replace both** `DATABASE_URL` and `DATABASE_URL_UNPOOLED` in the future runtime's
+  authenticated secrets interface with the same restricted login/password, exact
+  database and corresponding hosts. Both require `sslmode=verify-full`; optional
+  `channel_binding=require` is allowed. Other parameters, duplicates, mismatched
+  passwords/users/targets and missing URLs fail closed. A custom Futebol URL alone
+  is insufficient: the unused injected unpooled credential must also be restricted.
+
+No DSN, password or deploy token belongs in JSON metadata, source, argv, `.env`,
+Vite variables, logs or Handoff. No PRD sample/fallback is supplied. Static URL
+checks cannot prove live privileges or the absence of other administrative secrets;
+the future DEV check must verify effective process configuration without printing it.
+
+Pool construction is lazy and does not connect. On the first authenticated,
+body-validated private request, `assertRuntimeRole` and `assertDatabaseBoundary`
+must both succeed before `withActor`, bootstrap or domain SQL can run. Concurrent
+requests share that readiness promise; failure returns sanitized 503 and a later
+request can retry the checks. The role check also requires membership in
+`futebol_runtime` and refuses an absent/null safety result. The existing actor
+transaction, local `set_config`, RLS, grants, locks and save UUID are unchanged.
+Role/boundary readiness is per pool/isolate, not a continuous privilege audit.
+
+Only the pooled URL is used. Pool max 5, verified TLS and DB timeouts are retained;
+the pool lives across requests, has a silent idle-error listener and is never
+closed per request. G3 uses native fetch with a hard five-second timeout, positive
+cache <=60 seconds/exp, max 1024 confirmations and eight remote proofs. No stale
+fallback. All responses are no-store with sanitized errors. CORS uses the one
+configured origin; no Origin header still requires G3 for private requests.
+OPTIONS advertises the existing methods/headers. Body parsing follows authentication,
+requires exact `application/json`, enforces 256 KiB on streamed bytes and a 20-second
+body-read timeout, and stops before dispatch on abort. `/health` returns only
+`{ "status": "ok" }`; it is liveness, not proof of DB readiness or remote G3.
+
+`/__dev` and its descendants plus diagnostic query controls (`__dev*`, `phase`,
+`mode`, `transport`, `trial`, `stabilize`) return 404 before dispatch. The handler
+has a shared per-isolate 120-request/minute budget and eight active-request cap;
+it never derives identity/limits from proxy headers. These are bounded local
+controls, not distributed rate limits. 429 includes Retry-After: 60; identity
+dependency failure remains 503 / Retry-After: 2. No automatic write retry is added.
+
+Local verification uses the existing lint/typecheck and Node test runner. New
+tests cover the fetch edge, explicit configuration, restricted readiness and the
+entrypoint's source import graph. They use synthetic keys/streams/pool doubles;
+they do not prove Neon bundling, live TLS/roles/RLS, Kinde uptime or billing.
+The current frontend's 20-second total deadline is unchanged: JWKS + userinfo +
+connection + SQL can exceed it on cold start. The future DEV stage must measure
+that envelope and any uncertain save result using the same idempotent UUID;
+an indispensable frontend adjustment needs its own approval.
+
+Before a separately authorized DEV run: confirm Free/US$0 and the exact existing
+DEV branch/destination; approve complete metadata; prepare a dedicated restricted
+login by the authorized administrative procedure, outside the Function; replace
+both injected URLs using secrets storage; package only the explicit entrypoint and
+its runtime dependencies with the platform's Node 24 bundler. Inspect that candidate
+bundle, then run a short real smoke of initial/renewed G3, cache/TTL, negatives,
+`/me`, cold connection, effective role/grants/RLS, actor isolation and one idempotent
+save/history. Verify the unused unpooled URL is restricted too. Do not run migrations,
+empty-database fixtures, or the experimental DEV runners against preserved data.
+Record only sanitized outcomes/timings and the candidate digest. No remote execution,
+credential access, deployment or Functions DEV PASS is part of stage 1.
+
+## Existing DEV entrypoints
+
 Local runtime: Node 24 (TypeScript stripping) or compatible TS runner; `pnpm dev:api` binds only localhost:8787. No cloud deployment, paid runtime or Production settings. The default entry rejects all authentication pending G3/Neon evidence. `/health` is public and reports the gate. Credentials are never needed for this entry.
 
 `auth.ts` uses jose RS256/JWKS with exact issuer, audience, client, timestamps, lifetime and signed principal proof. The proof defaults to false with no environment override. Synthetic fixture proofs in tests are not Kinde evidence. Unknown keys are handled by jose fixed remote JWKS caching/rotation; token-provided key URLs are rejected.

@@ -2,16 +2,13 @@ import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Principal } from './auth.ts'
 import { AuthenticationError, IdentityUnavailableError } from './auth.ts'
+import { HttpError } from './http-error.ts'
+export { HttpError } from './http-error.ts'
 
 export interface ApiDependencies {
   health?: { status: 'dev'; authentication: 'gated' | 'validated-dev' }
   authenticate: (authorization: string | undefined, url: URL) => Promise<Principal>
   dispatch: (principal: Principal, method: string, url: URL, body: unknown) => Promise<unknown>
-}
-export class HttpError extends Error {
-  status: number
-  code: string
-  constructor(status: number, code: string) { super(code); this.status = status; this.code = code }
 }
 async function readBody(request: IncomingMessage): Promise<unknown> {
   if (!['POST', 'PATCH', 'PUT'].includes(request.method ?? '')) return undefined

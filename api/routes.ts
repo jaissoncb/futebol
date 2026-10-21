@@ -1,7 +1,22 @@
 import type { Pool, PoolClient } from 'pg'
 import type { Principal } from './auth.ts'
-import { withActor } from './database.ts'
-import { HttpError } from './server.ts'
+import { assertDatabaseBoundary, assertRuntimeRole, withActor } from './database.ts'
+import { HttpError } from './http-error.ts'
+
+// One readiness check per pool/isolate. A failed check never enables dispatch;
+// a subsequent request may retry after a transient connection failure.
+export function createRestrictedDatabaseDispatch(pool: Pool) {
+  const dispatch = createDatabaseDispatch(pool)
+  let readiness: Promise<void> | undefined
+  return async (principal: Principal, method: string, url: URL, body: unknown) => {
+    readiness ??= assertRuntimeRole(pool).then(() => assertDatabaseBoundary(pool)).catch((error: unknown) => {
+      readiness = undefined
+      throw error
+    })
+    await readiness
+    return dispatch(principal, method, url, body)
+  }
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 function id(value: string) { if (!uuid.test(value)) throw new HttpError(400, 'invalid_id'); return value }

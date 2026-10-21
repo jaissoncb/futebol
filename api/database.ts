@@ -2,7 +2,7 @@ import { Pool } from 'pg'
 import type { PoolClient } from 'pg'
 import type { Principal } from './auth.ts'
 
-export function createRuntimePool(connectionString: string): Pool {
+export function createRuntimePool(connectionString: string, applicationName = 'futebol-dev-api'): Pool {
   // Remote credentials are backend-only; the isolated DEV runner uses stdin.
   // Never turn off certificate validation or log the DSN.
   let url: URL
@@ -15,12 +15,13 @@ export function createRuntimePool(connectionString: string): Pool {
   if (!local) url.searchParams.delete('sslmode')
   return new Pool({ connectionString: url.href, ssl: local ? undefined : { rejectUnauthorized: true }, max: 5, connectionTimeoutMillis: 5000,
     idleTimeoutMillis: 30000, statement_timeout: 15000, query_timeout: 17000,
-    application_name: 'futebol-dev-api' })
+    application_name: applicationName })
 }
 
 export async function assertRuntimeRole(pool: Pool): Promise<void> {
   const result = await pool.query<{ unsafe: boolean }>(`select (
     r.rolsuper or r.rolbypassrls or r.rolcreatedb or r.rolcreaterole or r.rolreplication
+    or not pg_has_role(current_user, 'futebol_runtime', 'MEMBER')
     or has_schema_privilege(current_user, 'public', 'CREATE')
     or has_schema_privilege(current_user, 'private', 'CREATE')
     or has_database_privilege(current_user, current_database(), 'CREATE')
@@ -35,7 +36,7 @@ export async function assertRuntimeRole(pool: Pool): Promise<void> {
       and (inherited.rolsuper or inherited.rolbypassrls or inherited.rolcreatedb
         or inherited.rolcreaterole or inherited.rolreplication))
   ) as unsafe from pg_roles r where r.rolname=current_user`)
-  if (result.rows.length !== 1 || result.rows[0].unsafe) throw new Error('unsafe_runtime_role')
+  if (result.rows.length !== 1 || result.rows[0].unsafe !== false) throw new Error('unsafe_runtime_role')
 }
 
 export async function assertDatabaseBoundary(pool: Pool): Promise<void> {
