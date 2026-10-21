@@ -1,0 +1,12 @@
+{
+  "environment": "dev",
+  "appOrigin": "http://localhost:5173",
+  "apiBaseUrl": "https://br-shiny-dust-bastckar-futebolapi.compute.c-8.eu-central-1.aws.neon.tech",
+  "identity": {
+    "domain": "https://sabara-test.eu.kinde.com",
+    "clientId": "ec7038eb3fba4f958013e0b36437caf1",
+    "audience": "urn:sabara:futebol:api:dev",
+    "redirectUri": "http://localhost:5173/",
+    "logoutUri": "http://localhost:5173/"
+  }
+}

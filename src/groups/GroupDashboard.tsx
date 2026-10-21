@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
+import { GroupSwitcher } from './GroupSwitcher'
 import {
   createGroup,
   createPlayer,
@@ -58,7 +59,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!client) {
-      setError('A conexão com o Supabase não está configurada neste ambiente.')
+      setError('A conexão com o Futebol não está configurada neste ambiente.')
       setLoading(false)
       return
     }
@@ -86,7 +87,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
     if (!client) {
       void Promise.resolve().then(() => {
         if (!cancelled) {
-          setError('A conexão com o Supabase não está configurada neste ambiente.')
+          setError('A conexão com o Futebol não está configurada neste ambiente.')
           setLoading(false)
         }
       })
@@ -161,7 +162,9 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
           <p className="eyebrow">Seus grupos</p>
           <h1>Quem joga hoje?</h1>
         </div>
-        <button className="icon-action" type="button" aria-label="Criar outro grupo" disabled={navigationLocked} onClick={() => setShowGroupForm((visible) => !visible)}>＋</button>
+        <button className="solid-action new-group-action" type="button" disabled={navigationLocked} onClick={() => setShowGroupForm((visible) => !visible)}>
+          <span aria-hidden="true">＋</span><span>Novo grupo</span>
+        </button>
       </section>
 
       {error ? <p className="form-status" role="alert">{error}</p> : null}
@@ -179,20 +182,8 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
         </section>
       ) : null}
 
-      <div className="group-switcher" role="group" aria-label="Grupos">
-        {groups.map((group) => (
-          <button
-            aria-pressed={group.id === selectedGroupId}
-            disabled={navigationLocked}
-            className={group.id === selectedGroupId ? 'group-chip selected' : 'group-chip'}
-            key={group.id}
-            onClick={() => { setSelectedGroupId(group.id); setEditingPlayer(null); setShowSettings(false) }}
-            type="button"
-          >
-            {group.name}
-          </button>
-        ))}
-      </div>
+      <GroupSwitcher groups={groups} selectedId={selectedGroupId} disabled={navigationLocked}
+        onSelect={id => { setSelectedGroupId(id); setEditingPlayer(null); setShowSettings(false) }} />
 
       {selectedGroup ? (
         <>
@@ -383,7 +374,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved
     <form className="data-form" aria-busy={busy} onSubmit={(event) => void handleSubmit(event)}><fieldset className="form-fields" disabled={busy}>
       <div className="form-heading"><h2>{playerId ? 'Editar jogador' : 'Novo jogador'}</h2><button type="button" className="close-action" aria-label="Fechar" disabled={busy} onClick={onCancel}>×</button></div>
       <label>Nome<input name="name" defaultValue={initialValue.name} minLength={2} maxLength={80} required autoFocus /></label>
-      <label>Apelido <span>(opcional)</span><input name="nickname" defaultValue={initialValue.nickname ?? ''} maxLength={40} /></label>
+      <label><span className="field-label">Apelido <span>(opcional)</span></span><input name="nickname" defaultValue={initialValue.nickname ?? ''} maxLength={40} /></label>
       <div className="form-grid">
         <label>Nível<select aria-label="Nível" name="skillRating" defaultValue={initialValue.skillRating}>{skillOptions()}</select></label>
         <label>Posição<select aria-label="Posição" name="preferredPosition" defaultValue={initialValue.preferredPosition ?? ''}><option value="">Sem preferência</option>{Object.entries(POSITION_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>

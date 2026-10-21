@@ -42,6 +42,8 @@ describe('isolated DEV HTTP client preparation', () => {
     }
     await expect(client.request('/me')).rejects.toMatchObject({ status: 401 })
     expect(transport).not.toHaveBeenCalled()
-    expect(() => createApiClient('https://other.test', () => Promise.resolve(null))).toThrow()
+    for (const base of ['http://other.test', 'https://user:password@other.test', 'https://other.test/path', 'https://other.test?token=bad']) {
+      expect(() => createApiClient(base, () => Promise.resolve(null))).toThrow()
+    }
   })
 })

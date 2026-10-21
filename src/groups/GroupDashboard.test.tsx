@@ -130,7 +130,7 @@ it('preserva retry durante recarga do elenco e bloqueia troca de grupo enquanto 
   vi.mocked(matches.loadMatchHistory).mockResolvedValue([])
   vi.mocked(matches.loadSavedMatch).mockImplementation(() => new Promise(() => {}))
   render(<GroupDashboard client={client} userId="user" />)
-  await user.click(await screen.findByRole('button', { name: 'Criar outro grupo' }))
+  await user.click(await screen.findByRole('button', { name: 'Novo grupo' }))
   await user.click(await screen.findByRole('button', { name: 'Selecionar participantes' }))
   await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
   await user.click(screen.getByRole('button', { name: 'Sortear times' }))

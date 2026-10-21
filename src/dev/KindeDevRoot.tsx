@@ -5,7 +5,7 @@ import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
 import { cleanKindeCallback } from '../bootstrap/kinde-return'
 import { createFutebolAuthorization } from '../auth/kinde-authorization'
 import { ApiError } from '../lib/api/client'
-import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
+import { createDevApiServices as createFutebolApiServices, type DevApiServices as FutebolApiServices } from './api-services'
 import { DevWorkspace } from './DevWorkspace'
 import { accountPortalUrl, kindeTestConfig } from './kinde-test-config'
 import { createG3BrowserProbe } from './g3-probe'
@@ -130,7 +130,7 @@ function DevHome({ session, failed, probe, probeStatus, refreshEpoch }: { sessio
   async function login(register = false) {
     setStatus(null)
     try {
-      const url = await createFutebolAuthorization(window.location.hash, register)
+      const url = await createFutebolAuthorization(kindeTestConfig, window.location.hash, register)
       window.location.assign(url.href)
     } catch { setStatus('Não foi possível iniciar o acesso. Tente novamente.') }
   }

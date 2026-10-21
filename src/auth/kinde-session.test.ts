@@ -48,4 +48,13 @@ describe('Futebol OAuthTransactionStorage with real official SDK storage classes
     expect(localStorage.getItem('refreshToken0')).toBe('account-fixture-token')
     expect(transaction.getSessionItem(StorageKeys.refreshToken)).toBeNull()
   })
+  it('PRD never restores a DEV transaction or changes its persistent namespace', () => {
+    const dev = configureKindeSession('dev')
+    dev.transaction.setSessionItem(StorageKeys.state, 'synthetic-dev-state')
+    const prd = configureKindeSession('prd')
+    expect(prd.transaction.getSessionItem(StorageKeys.state)).toBeNull()
+    prd.transaction.destroySession()
+    configureKindeSession('dev')
+    expect(dev.transaction.getSessionItem(StorageKeys.state)).toBe('synthetic-dev-state')
+  })
 })

@@ -9,7 +9,7 @@ describe('domain services through Futebol API', () => {
   it('reuses existing domain calls, supplies only memory Bearer and never forwards user ID', async () => {
     const transport = vi.fn<typeof fetch>().mockImplementation((url) => Promise.resolve(Response.json(
       (url as URL).pathname === '/workspace' ? { groups: [group], players } : { id: group.id })))
-    const services = createFutebolApiServices(() => Promise.resolve('synthetic-memory-access'), transport)
+    const services = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('synthetic-memory-access'), transport)
     expect(await loadGroupWorkspace(services, 'must-not-be-forwarded')).toEqual({ groups: [group], players })
     const input = { name: 'Fixture', sport: 'futsal', defaultPlayersOnCourt: 1 }
     expect(await createGroup(services, input)).toBe(group.id)
@@ -31,7 +31,7 @@ describe('domain services through Futebol API', () => {
   it('preserves save attempt ID/retry payload and checks returned ID; reads one graph snapshot', async () => {
     const transport = vi.fn<typeof fetch>().mockImplementation((url, options) => Promise.resolve(Response.json(
       options?.method === 'PUT' ? { id: matchId } : (url as URL).pathname.endsWith(matchId) ? saved : [saved.match])))
-    const services = createFutebolApiServices(() => Promise.resolve('synthetic-access'), transport)
+    const services = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('synthetic-access'), transport)
     for (let i = 0; i < 2; i++) expect(await saveMatchDraw(services, matchId, payload)).toBe(matchId)
     expect(transport.mock.calls[0]![1]?.body).toBe(transport.mock.calls[1]![1]?.body)
     expect(await loadMatchHistory(services, group.id, 1)).toEqual([saved.match])
@@ -47,7 +47,7 @@ describe('domain services through Futebol API', () => {
   it('rejects invalid IDs/pages before HTTP and rejects late responses after session close', async () => {
     let release!: (value: Response) => void
     const transport = vi.fn<typeof fetch>().mockReturnValue(new Promise<Response>(resolve => { release = resolve }))
-    const services = createFutebolApiServices(() => Promise.resolve('synthetic-access'), transport)
+    const services = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('synthetic-access'), transport)
     await expect(services.history('../../other')).rejects.toBeInstanceOf(ApiError)
     await expect(services.history(group.id, -1)).rejects.toBeInstanceOf(ApiError)
     expect(transport).not.toHaveBeenCalled()

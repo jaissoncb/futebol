@@ -14,7 +14,7 @@ describe('official SDK PKCE with synthetic HTTP fixtures only', () => {
   })
   afterEach(() => { clearRefreshTimer(); localStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const begin = async () => {
-    const url = await createFutebolAuthorization('#/conta')
+    const url = await createFutebolAuthorization(kindeTestConfig, '#/conta')
     return { url, state: url.searchParams.get('state')!, nonce: url.searchParams.get('nonce')!,
       codeChallenge: url.searchParams.get('code_challenge')! }
   }

@@ -1,61 +1,80 @@
 # Futebol
 
-Aplicação independente para organizar partidas entre amigos, gerenciar grupos e jogadores, sortear times equilibrados e registrar o histórico das partidas.
+Aplicação para organizar partidas entre amigos, gerenciar grupos e jogadores,
+sortear times equilibrados e salvar o histórico. Repositório `jaissoncb/futebol`;
+domínio planejado `https://futebol.sabara.org/`, sempre na raiz.
 
-Arquitetura planejada:
+## Prévia DEV
 
-- repositório: `jaissoncb/futebol`;
-- domínio oficial: `https://futebol.sabara.org/`;
-- aplicação Vite/React na raiz;
-- rotas da interface com `HashRouter`;
-- PWA e service worker no escopo `/`;
-- baseline legado de banco/autenticação Supabase preservado até concluir a validação DEV;
-- DEV em migração para cliente público Kinde Test, API intermediária e Neon vazio/isolado.
-
-## Requisitos
-
-- Node.js 22.18 ou superior;
-- pnpm 11.19.0;
-- Docker e Supabase CLI para os testes de banco locais.
-
-## Desenvolvimento
+Requisitos: Node 24 (também usado pela API) e pnpm 11.19.0. Com as dependências
+já instaladas, não é necessário Internet para compilar ou servir o frontend:
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm dev
+pnpm build:dev
+pnpm preview:dev
 ```
 
-`pnpm dev` serve a entrada Kinde Test isolada em `http://localhost:5173/`, com porta estrita e metadados públicos confirmados do Futebol. Não execute junto com Account Test ou a PoC Identity na mesma porta/origem. A transação OAuth tem namespace exclusivo; access/ID/refresh tokens ficam somente em memória. Reload pode exigir novo login. Account é somente o portal de gestão da conta.
+Abra **http://localhost:5173/**. A prévia estática de `dist-dev/` usa diretamente
+a Function `futebolapi` DEV já implantada em Frankfurt e o Kinde Test existente.
+O login humano e as chamadas à API precisam de Internet; não há API local, proxy,
+segredo de banco ou novo deploy. O endereço/porta precisam ser exatos por causa
+dos callbacks Kinde e do CORS já aprovados. Não execute Account/Identity na mesma
+origem/porta; prefira o perfil de navegador exclusivo do Futebol DEV.
 
-Em outro terminal, `pnpm dev:api` inicia a API local em localhost:8787 com autenticação **fechada por padrão**, sem banco, até a prova positiva do principal e a integração Neon serem validadas. O botão de acesso DEV pode receber 401 enquanto esse gate estiver aberto. Grupos/partidas ainda não estão ligados à nova entrada; a interface legada está preservada.
+Para editar com recarga automática: `pnpm dev`. Pare com Ctrl+C. Se a instalação
+local antiga tiver um worker de diagnóstico controlando essa origem, feche suas
+abas e remova somente o worker `http://localhost:5173/sw.js` nas ferramentas do
+navegador antes de abrir a nova prévia. Não limpe dados de outros projetos.
 
-`pnpm build:dev` gera `dist-dev/`, verifica raiz/PWA, configuração Test exclusiva e scanner de segredos, sem usar variáveis Supabase. Não publica nada. O build padrão/CI continuam no baseline legado; a migração completa não está liberada para Production. Nunca coloque Client Secret, DSN Neon ou qualquer chave privilegiada no frontend, `.env` compartilhado, Git ou Drive.
+Login/cadastro continuam no Sabará ID pelo SDK Kinde, com PKCE S256 e tokens
+somente em memória. Apenas a transação OAuth temporária persiste em namespace
+Futebol, com TTL. Reload/nova aba podem exigir novo login. Logout cancela pedidos
+privados, remove dados da tela e sinaliza as outras abas Futebol desse ambiente;
+não solicita encerramento global de sessões. O portal Account continua apenas
+como link de gestão da conta.
 
-## Verificações do frontend
+## Configuração e build
 
-```powershell
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm test:bundle-security
-pnpm test:workflow
-pnpm build
-pnpm verify:artifact
-pnpm test:release-build
-```
+- `deployment/frontend-dev.json`: metadados públicos exatos de DEV; sem `.env`.
+- `deployment/frontend-prd.json`: destino oficial e contrato ainda incompleto.
+  `pnpm build` **falha deliberadamente** até aprovar/preencher Kinde e API PRD
+  próprios. Nunca usa fallback Test. Metadados não são autorização de deploy.
+- `src/main.tsx` abre o frontend Futebol com as telas/regras existentes. Diagnósticos,
+  probes, autenticação legada e SDK Supabase ficam fora de seu grafo de build.
+- `pnpm build:dev` verifica grafo, PWA, configuração emitida e scanner de segredos.
+  `node scripts/verify-pages-artifact.mjs dist-dev` verifica o pacote estático.
+- `pnpm test:release-build` verifica o bloqueio PRD e as barreiras do artefato DEV
+  já compilado. Não publica nada nem acessa serviços remotos.
 
-O E2E depende do Supabase local iniciado e reconstruído pelas migrations:
+Vite não lê arquivos `.env` nem expõe variáveis `VITE_*` nesta entrada. Nenhum
+Client Secret, token, chave Neon, DSN ou senha pertence ao frontend/Git.
+O worker armazena somente o shell estático; não há cache runtime de API, tokens,
+perfil ou dados privados. Atualização continua exigindo confirmação e respeita
+partidas/salvamentos pendentes. Base, manifest, worker e HashRouter usam `/`.
 
-```powershell
-pnpm test:e2e
-```
+## Ferramentas locais preservadas
 
-## Supabase local
+`pnpm dev:diagnostics` abre a entrada antiga de diagnósticos Kinde em localhost:5173,
+apontando para a API **local** em localhost:8787. `pnpm build:diagnostics` gera
+`dist-diagnostics/`, ignorado pelo Git. Não use esse artefato para publicação.
+Os runners de banco e o E2E Supabase são históricos; não são a validação desta
+entrada e não devem ser executados contra DEV preservado. Fontes e migrations
+legadas permanecem disponíveis; não há migração de usuários, senhas ou dados.
 
-As migrations, políticas RLS, grants e testes ficam em `supabase/`. O identificador local é `futebol`; isso não cria nem substitui o projeto remoto existente.
+A API validada e seus scripts estão documentados em `deployment/README.md`.
+Não repita provisionamento, deploy ou smoke remoto concluído.
 
-Consulte `supabase/README.md` para a sequência completa de validação local. Operações remotas como `supabase link`, `db push` ou alterações de Auth exigem autorização explícita.
+## Antes de Production
 
-## Publicação
+Intervenção humana: aprovar contrato PRD próprio no Sabará ID/Kinde (issuer,
+cliente público, audience, callback/logout raiz) e destino API/banco PRD, confirmar
+plano Free e autorizar separadamente infraestrutura, DNS e publicação. Não há
+contrato PRD nem autorização de Production nesta etapa.
 
-O workflow em `.github/workflows/ci-pages.yml` prepara somente `dist/` e exige dispatch manual em `main` com o SHA completo para empacotar e publicar no GitHub Pages. A infraestrutura remota ainda não faz parte desta extração local.
+Após aprovação, Codex pode preencher/revisar a configuração pública PRD, preparar
+a API PRD com CORS exato e configuração restrita, verificar build/testes/scanner
+e preparar a revisão do release. Implantação, DNS, push/merge e Pages somente
+com autorização específica posterior. O workflow local foi desacoplado das
+variáveis Supabase e continua bloqueado pelo build PRD incompleto; não foi executado.
+GitHub Pages recebe somente `dist/`, com release manual em `main` e SHA exato.
+Nenhuma assinatura, upgrade ou serviço pago foi adicionado.

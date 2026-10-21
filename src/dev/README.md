@@ -1,5 +1,13 @@
 # Entrada Kinde Test isolada
 
+Atualização de 21/10/2026: esta é a ferramenta **local de diagnóstico**, ativada
+por `pnpm dev:diagnostics`/`pnpm build:diagnostics`, com saída `dist-diagnostics/`
+e API local 8787. O frontend publicável usa `src/main.tsx`, `pnpm dev` e
+`pnpm build:dev`/`preview:dev` com a Function DEV existente, sem importar este
+diretório. O texto abaixo registra os ensaios históricos; suas referências a
+`dist-dev` e ao build padrão legado foram substituídas pelo README da raiz.
+Não repita os ensaios remotos concluídos.
+
 Ativada somente pelo modo Vite `kinde-dev`, usado por `pnpm dev`/`dev:frontend`/`build:dev`. O plugin troca a entrada HTML **antes** do processamento do Vite. O build padrão não utiliza esta entrada. Metadados públicos vieram do resultado Identity de 17/10/2026; não foram copiados do cliente Account.
 
 Referência de arquitetura somente leitura: Account `authSession.ts`, `accountActions.ts`, `config.ts`, `main.tsx` e `authCallbacks.ts`. React SDK oficial 5.13.1, tokens em MemoryStorage; OAuthTransactionStorage persiste só a transação com namespace Futebol e TTL de 10 minutos. A memória nova não restaura tokens; o adapter ignora tokens persistidos antigos e destrói só seu namespace. `useInsecureForRefreshToken=false` permanece obrigatório, junto ao adapter.

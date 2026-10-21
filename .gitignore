@@ -9,6 +9,7 @@ Desktop.ini
 node_modules/
 dist/
 dist-dev/
+dist-diagnostics/
 coverage/
 *.log
 
@@ -22,6 +23,7 @@ coverage/
 .repo-sync/
 .tools/
 AGENTS.override.md
+scripts/test-frontend-preview.mjs
 
 # Supabase local state
 supabase/.branches/

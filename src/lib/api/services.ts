@@ -8,8 +8,8 @@ function id(value: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new ApiError(400)
   return value
 }
-export function createFutebolApiServices(getAccessToken: () => Promise<string | null>, transport = fetch) {
-  const client = createApiClient('http://localhost:8787', getAccessToken, transport)
+export function createFutebolApiServices(baseUrl: string, getAccessToken: () => Promise<string | null>, transport = fetch) {
+  const client = createApiClient(baseUrl, getAccessToken, transport)
   return {
     kind: 'futebol-api' as const,
     isClosed: client.isClosed,
@@ -21,7 +21,6 @@ export function createFutebolApiServices(getAccessToken: () => Promise<string | 
       return profile
     },
     workspace: () => client.request<GroupWorkspaceData>('/workspace'),
-    stabilizationRead: () => client.request<GroupWorkspaceData>('/workspace?__dev_delay=1'),
     async createGroup(input: GroupInput) {
       const response = await client.request<{ id: string }>('/groups', 'POST', input)
       return id(response.id)

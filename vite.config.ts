@@ -1,21 +1,39 @@
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
-import { loadEnv } from 'vite'
-import { validateSupabaseEnvironment } from './src/config/public-environment.ts'
+import { readFileSync } from 'node:fs'
+import { validateFutebolEnvironment } from './src/config/futebol-environment.ts'
 
-export default defineConfig(({ command, mode }) => {
-  if (command === 'build' && mode !== 'kinde-dev') {
-    const env = loadEnv(mode, import.meta.dirname, ['VITE_SUPABASE_URL', 'VITE_SUPABASE_PUBLISHABLE_KEY'])
-    validateSupabaseEnvironment({
-      VITE_SUPABASE_URL: env.VITE_SUPABASE_URL,
-      VITE_SUPABASE_PUBLISHABLE_KEY: env.VITE_SUPABASE_PUBLISHABLE_KEY,
-    }, { allowLocalHttp: mode === 'local-test' })
+export default defineConfig(({ mode }) => {
+  const publicEntry = mode !== 'kinde-dev' && mode !== 'test'
+  let frontendConfig
+  if (publicEntry) {
+    const environment = mode === 'futebol-dev' ? 'dev' : mode === 'production' ? 'prd' : null
+    if (!environment) throw new Error('Use um modo explícito: futebol-dev ou production.')
+    frontendConfig = validateFutebolEnvironment(JSON.parse(readFileSync(
+      new URL(`./deployment/frontend-${environment}.json`, import.meta.url), 'utf8')), environment)
   }
   return {
     base: '/',
+    envDir: false,
+    envPrefix: [],
+    define: frontendConfig ? { __FUTEBOL_FRONTEND_CONFIG__: JSON.stringify(frontendConfig) } : {},
     server: { watch: { ignored: ['**/dist-dev/**'] } },
     plugins: [
+      ...(publicEntry ? [{
+        name: 'futebol-public-runtime-graph',
+        generateBundle(_options: unknown, bundle: Record<string, { type: string; modules?: Record<string, unknown> }>) {
+          for (const chunk of Object.values(bundle)) {
+            for (const raw of Object.keys(chunk.modules ?? {})) {
+              const id = raw.replaceAll('\\', '/')
+              if (id.startsWith(`${import.meta.dirname.replaceAll('\\', '/')}/api/`)
+                || /\/src\/(dev\/|App\.tsx|auth\/AuthProvider\.tsx|bootstrap\/auth-pkce\.ts|lib\/supabase\/client\.ts)|\/node_modules\/(?:\.pnpm\/@supabase\+|@supabase\/)|\.test\.[cm]?[jt]sx?$/.test(id)) {
+                throw new Error('Módulo privado, legado ou de diagnóstico no grafo publicável.')
+              }
+            }
+          }
+        },
+      }] : []),
       ...(mode === 'kinde-dev' ? [{
         name: 'futebol-kinde-dev-entry',
         transformIndexHtml: {

@@ -2,11 +2,11 @@ import { access, readFile, readdir } from 'node:fs/promises'
 import { resolve, relative } from 'node:path'
 import ts from 'typescript'
 import { assertPublicBundle } from './bundle-security.mjs'
-import { getBuildEnvironment } from './build-environment.mjs'
+import { getFrontendEnvironment } from './frontend-environment.mjs'
 
 const dist = resolve(import.meta.dirname, '..', 'dist')
 export async function verifyBuild({ directory = dist, mode = 'production' } = {}) {
-  const environment = getBuildEnvironment(mode)
+  const environment = getFrontendEnvironment(mode)
   const manifestPath = resolve(directory, 'manifest.webmanifest')
   const indexPath = resolve(directory, 'index.html')
   const serviceWorkerPath = resolve(directory, 'sw.js')
@@ -63,9 +63,8 @@ export async function verifyBuild({ directory = dist, mode = 'production' } = {}
     return found
   }
   const entryLiterals = literalValues(await readFile(entryPath, 'utf8'))
-  if (!entryLiterals.some((value) => value.trim().replace(/\/$/, '') === environment.url)
-    || !entryLiterals.some((value) => value.trim() === environment.publishableKey)) {
-    throw new Error('Configuração pública Supabase esperada não foi emitida na entrada JS.')
+  for (const value of [environment.apiBaseUrl, environment.appOrigin, ...Object.values(environment.identity)]) {
+    if (!entryLiterals.includes(value)) throw new Error('Configuração pública Futebol esperada não foi emitida na entrada JS.')
   }
   const worker = await readFile(serviceWorkerPath, 'utf8')
   if (!worker.includes('/index.html') || !worker.includes('allowlist:[/^\\/$/]')
@@ -77,16 +76,18 @@ export async function verifyBuild({ directory = dist, mode = 'production' } = {}
     if (!/\.(js|map|html|css|webmanifest|txt)$/.test(file)) continue
     const text = await readFile(resolve(directory, file), 'utf8')
     assertPublicBundle(text)
-    if (file.endsWith('.js') && hasScopedRegistration(text)) registrationFound = true
-    if (resolve(directory, file) !== entryPath && (text.includes(environment.publishableKey) || text.includes(environment.url))) {
-      throw new Error('Configuração pública Supabase emitida fora da entrada JS esperada.')
+    if (/VITE_SUPABASE|sb_publishable_|\.supabase\.co|stabilizationRead|stabilization_probe|__dev_delay|\/__dev\/|Iniciar diagnóstico|G3 automatic|localhost:8787/.test(text)) {
+      throw new Error('Configuração legada ou instrumentação DEV no artefato publicável.')
     }
+    if (file.endsWith('.js') && hasScopedRegistration(text)) registrationFound = true
   }
   if (!registrationFound) throw new Error('Registro do worker com scope raiz não encontrado.')
-  return { publicSupabaseConfiguration: true, keyClassification: environment.publishableKey.startsWith('sb_publishable_') ? 'publishable' : 'legacy anon' }
+  return { environment: environment.environment, publicFutebolConfiguration: true }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.dirname, 'verify-build.mjs')) {
-  const result = await verifyBuild({ mode: process.argv.includes('--local') ? 'local-test' : 'production' })
-  console.log(`Build verificado: raiz, PWA, configuração pública presente (${result.keyClassification}) e scanner de credenciais aprovado.`)
+  const dev = process.argv.includes('--dev')
+  const result = await verifyBuild({ directory: dev ? resolve(import.meta.dirname, '..', 'dist-dev') : dist,
+    mode: dev ? 'futebol-dev' : 'production' })
+  console.log(`Build ${result.environment} verificado: raiz, PWA, Kinde/API explícitos, sem diagnósticos e scanner de credenciais aprovado.`)
 }

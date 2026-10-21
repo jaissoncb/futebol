@@ -7,8 +7,10 @@ export class ApiError extends Error {
 // across accounts. Auth provider must close this instance before logout/switch.
 export function createApiClient(baseUrl: string, getAccessToken: () => Promise<string | null>, transport = fetch) {
   const base = new URL(baseUrl)
-  if (base.origin !== 'http://localhost:8787' || base.pathname !== '/' || base.search || base.hash) {
-    throw new Error('API DEV inválida.')
+  const local = base.protocol === 'http:' && base.hostname === 'localhost' && base.port === '8787'
+  if ((base.protocol !== 'https:' && !local)
+    || base.username || base.password || base.pathname !== '/' || base.search || base.hash) {
+    throw new Error('API Futebol inválida.')
   }
   let closed = false
   const requests = new Set<AbortController>()

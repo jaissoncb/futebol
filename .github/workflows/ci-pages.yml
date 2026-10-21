@@ -62,9 +62,6 @@ jobs:
           pnpm test:workflow
 
       - name: Build and verify Futebol
-        env:
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: pnpm build
 
       - name: Validate public Pages artifact

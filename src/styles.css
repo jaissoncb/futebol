@@ -140,6 +140,7 @@ select:focus-visible {
 }
 
 .hero-card::after {
+  pointer-events: none;
   position: absolute;
   right: -48px;
   bottom: -72px;
@@ -295,6 +296,24 @@ h1 {
   font-weight: 800;
 }
 
+.hero-card.futebol-welcome {
+  padding: clamp(26px, 4.5vw, 42px) clamp(22px, 4.5vw, 42px);
+}
+
+.futebol-welcome h1 {
+  max-width: 19ch;
+  font-size: clamp(1.95rem, 5vw, 2.85rem);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+}
+
+.futebol-welcome .hero-copy { margin: 18px 0 24px; }
+.welcome-actions { position: relative; z-index: 1; width: min(100%, 360px); gap: 12px; }
+.welcome-actions .primary-action,
+.welcome-actions .secondary-action { width: 100%; min-height: 52px; padding: 12px 16px; border-radius: 14px; text-align: center; }
+.welcome-actions .primary-action { justify-content: center; }
+.welcome-actions .secondary-action { font-size: 0.9rem; font-weight: 650; }
+
 .primary-action:disabled {
   cursor: not-allowed;
   opacity: 0.78;
@@ -424,6 +443,12 @@ h2 {
   font-size: clamp(2rem, 9vw, 3.2rem);
 }
 
+.workspace-heading { align-items: center; gap: 12px; }
+.workspace-heading > div { min-width: 0; }
+.workspace-heading h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); line-height: 1.12; }
+.new-group-action { flex: 0 0 auto; min-height: 44px; padding: 10px 14px; gap: 6px; font-size: 0.88rem; white-space: nowrap; }
+.new-group-action > span:first-child { font-size: 1.15rem; line-height: 1; }
+
 .workspace-heading .eyebrow,
 .players-section .eyebrow,
 .empty-workspace .eyebrow {
@@ -454,12 +479,22 @@ h2 {
 
 .group-switcher {
   display: flex;
-  margin: 0 -16px;
-  padding: 20px 16px 4px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  padding: 8px 6px 10px;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: none;
+  scroll-padding-inline: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: #b9c9c2 transparent;
 }
+
+.group-navigation { min-width: 0; }
+.group-navigation-hint { display: flex; justify-content: space-between; flex-wrap: wrap; padding-inline: 6px; gap: 4px 12px; color: var(--muted); font-size: 0.78rem; }
+.group-navigation-row { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.group-scroll-action { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border: 1px solid var(--line); border-radius: 14px; background: white; color: var(--green-800); font-size: 1.7rem; }
+.group-scroll-action:disabled { opacity: 0.4; }
 
 .group-chip {
   min-height: 44px;
@@ -620,7 +655,7 @@ h2 {
 }
 
 .data-form {
-  gap: 15px;
+  gap: 16px;
 }
 
 .data-form label {
@@ -628,12 +663,16 @@ h2 {
   color: var(--ink);
   font-size: 0.9rem;
   font-weight: 750;
+  line-height: 1.4;
 }
 
 .data-form label span {
   color: var(--muted);
   font-weight: 500;
 }
+
+.data-form .field-label { display: block; color: var(--ink); font-weight: 750; }
+.data-form .field-label > span { color: var(--muted); font-weight: 500; white-space: nowrap; }
 
 .data-form input,
 .data-form select {
@@ -797,7 +836,12 @@ h2 {
 .draw-team ul { padding-left: 1.2rem; }
 .draw-team li { margin-block: 0.6rem; }
 .game-flow-heading, .game-flow-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.game-flow-heading .eyebrow { color: var(--green-700); }
+.game-flow-heading { align-items: flex-start; gap: 12px; }
+.game-flow-heading .eyebrow { margin-bottom: 8px; color: var(--green-700); font-size: 0.72rem; }
+.game-flow-heading h2 { max-width: 22ch; font-size: clamp(1.25rem, 3vw, 1.45rem); line-height: 1.25; }
+/* GameFlow deliberately focuses this heading on step changes and errors. */
+.game-flow-heading h2:focus-visible { outline: 2px solid var(--green-700); outline-offset: 5px; border-radius: 4px; }
+.draw-panel .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .game-flow-step { flex: 0 0 auto; border-radius: 999px; padding: 0.35rem 0.6rem; background: var(--green-100); color: var(--green-900); font-size: 0.8rem; font-weight: 800; }
 .game-flow-note, .game-summary { color: var(--muted); line-height: 1.45; }
 .result-editing { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -834,10 +878,13 @@ button:disabled, a[aria-disabled="true"] { cursor: not-allowed; }
 .match-history { padding: 1.25rem; }
 .game-flow-actions, .result-title, .section-title-row, .form-heading { flex-wrap: wrap; }
 .group-summary > div, .game-flow-heading > div, .result-title > div { min-width: 0; }
-.group-chip { max-width: min(80vw, 30rem); white-space: normal; overflow-wrap: anywhere; padding-block: 0.6rem; }
+.group-summary > div { flex: 1 1 17rem; }
+.group-summary h2 { overflow-wrap: anywhere; font-size: clamp(1.3rem, 3vw, 1.55rem); line-height: 1.25; }
+.group-chip { min-width: min(7rem, 100%); max-width: min(100%, 16rem); min-height: 48px; white-space: normal; overflow-wrap: anywhere; padding: 8px 14px; font-size: 0.9rem; line-height: 1.35; text-align: left; }
+.group-chip > span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .auth-form input, .data-form input, .data-form select { font-size: 1rem; }
 @media (max-width: 430px) {
-  .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .form-grid, .draw-panel .form-grid { grid-template-columns: minmax(0, 1fr); }
   .game-flow-actions > button { width: 100%; }
   .player-card { grid-template-columns: 40px minmax(0, 1fr); }
   .player-card > button { grid-column: 2; justify-self: start; }
