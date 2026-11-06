@@ -4,6 +4,7 @@ import { HashRouter, Link, Route, Routes } from 'react-router-dom'
 import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
 import { cleanKindeCallback } from '../bootstrap/kinde-return'
 import { createFutebolAuthorization } from '../auth/kinde-authorization'
+import { accessContract } from '../auth/access-contract'
 import { ApiError } from '../lib/api/client'
 import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
 import type { FutebolFrontendConfiguration } from '../config/futebol-environment'
@@ -84,7 +85,12 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
   useEffect(() => {
     if (!activeSession) return closePrivateRequests
     const requestGeneration = generation.current
-    const client = createFutebolApiServices(config.apiBaseUrl, async () => (await getAccessToken()) ?? null)
+    let contractCodes: string[] = ['token_not_requested']
+    const client = createFutebolApiServices(config.apiBaseUrl, async () => {
+      const token = (await getAccessToken()) ?? null
+      contractCodes = accessContract(token, config.identity)
+      return token
+    })
     clients.current.add(client)
     let cancelled = false
     void client.me().then(profile => {
@@ -96,6 +102,7 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
       if (!cancelled && requestGeneration === generation.current) {
         client.close(); clients.current.delete(client)
         if (error instanceof ApiError && [401, 403].includes(error.status)) {
+          console.warn('futebol_access_denied', error.status, contractCodes.length ? contractCodes.join(',') : 'contract_matches')
           session.transaction.destroySession(); setLocallySignedOut(true)
         }
         setStatus(error instanceof ApiError && [401, 403].includes(error.status)
@@ -103,7 +110,7 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
       }
     })
     return () => { cancelled = true; closePrivateRequests() }
-  }, [activeSession, accessAttempt, config.apiBaseUrl, getAccessToken, closePrivateRequests, session])
+  }, [activeSession, accessAttempt, config.apiBaseUrl, config.identity, getAccessToken, closePrivateRequests, session])
   useEffect(() => {
     if (!workspace || workspace.generation !== generation.current || !activeSession) { checkedRefresh.current = refreshEpoch; return }
     if (checkedRefresh.current === refreshEpoch) return
