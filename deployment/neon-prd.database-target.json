@@ -1,0 +1,18 @@
+{
+  "organizationId": "org-steep-math-64054637",
+  "projectId": "withered-haze-60370136",
+  "project": "futebol-prd",
+  "branch": "production",
+  "branchId": "br-divine-sun-badnm7ch",
+  "endpointId": "ep-proud-mountain-bafo1u4d",
+  "unpooledHost": "ep-proud-mountain-bafo1u4d.c-8.eu-central-1.aws.neon.tech",
+  "pooledHost": "ep-proud-mountain-bafo1u4d-pooler.c-8.eu-central-1.aws.neon.tech",
+  "bindingConfirmed": true,
+  "database": "futebol_prd",
+  "migrationRole": "neondb_owner",
+  "runtimeRole": "futebol_api_prd_functions",
+  "postgresMajor": 17,
+  "region": "aws-eu-central-1",
+  "plan": "Free",
+  "monthlyUsd": 0
+}

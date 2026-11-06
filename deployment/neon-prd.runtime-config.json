@@ -1,0 +1,19 @@
+{
+  "environment": "prd",
+  "allowedOrigin": "https://futebol.sabara.org",
+  "identity": {
+    "issuer": "https://login.sabara.org",
+    "audience": "urn:sabara:futebol:api:prd",
+    "clientId": "1806c992a59d45afa2461a7ee9ef19e8",
+    "jwksUri": "https://login.sabara.org/.well-known/jwks",
+    "maxLifetimeSeconds": 600,
+    "lifetimeRoundingSeconds": 1,
+    "userinfoUrl": "https://login.sabara.org/oauth2/v2/user_profile"
+  },
+  "database": {
+    "pooledHost": "ep-proud-mountain-bafo1u4d-pooler.c-8.eu-central-1.aws.neon.tech",
+    "unpooledHost": "ep-proud-mountain-bafo1u4d.c-8.eu-central-1.aws.neon.tech",
+    "name": "futebol_prd",
+    "runtimeRole": "futebol_api_prd_functions"
+  }
+}

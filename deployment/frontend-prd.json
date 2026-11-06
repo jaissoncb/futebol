@@ -1,6 +1,12 @@
 {
   "environment": "prd",
   "appOrigin": "https://futebol.sabara.org",
-  "apiBaseUrl": null,
-  "identity": null
+  "apiBaseUrl": "https://br-divine-sun-badnm7ch-futebolapi.compute.c-8.eu-central-1.aws.neon.tech",
+  "identity": {
+    "domain": "https://login.sabara.org",
+    "clientId": "1806c992a59d45afa2461a7ee9ef19e8",
+    "audience": "urn:sabara:futebol:api:prd",
+    "redirectUri": "https://futebol.sabara.org/",
+    "logoutUri": "https://futebol.sabara.org/"
+  }
 }

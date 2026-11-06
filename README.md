@@ -36,9 +36,8 @@ como link de gestão da conta.
 ## Configuração e build
 
 - `deployment/frontend-dev.json`: metadados públicos exatos de DEV; sem `.env`.
-- `deployment/frontend-prd.json`: destino oficial e contrato ainda incompleto.
-  `pnpm build` **falha deliberadamente** até aprovar/preencher Kinde e API PRD
-  próprios. Nunca usa fallback Test. Metadados não são autorização de deploy.
+- `deployment/frontend-prd.json`: metadados públicos próprios de Kinde e API PRD.
+  `pnpm build` gera o artefato Production e recusa contrato incompleto, sem fallback Test.
 - `src/main.tsx` abre o frontend Futebol com as telas/regras existentes. Diagnósticos,
   probes, autenticação legada e SDK Supabase ficam fora de seu grafo de build.
 - `pnpm build:dev` verifica grafo, PWA, configuração emitida e scanner de segredos.
@@ -64,17 +63,16 @@ legadas permanecem disponíveis; não há migração de usuários, senhas ou dad
 A API validada e seus scripts estão documentados em `deployment/README.md`.
 Não repita provisionamento, deploy ou smoke remoto concluído.
 
-## Antes de Production
+## Production
 
-Intervenção humana: aprovar contrato PRD próprio no Sabará ID/Kinde (issuer,
-cliente público, audience, callback/logout raiz) e destino API/banco PRD, confirmar
-plano Free e autorizar separadamente infraestrutura, DNS e publicação. Não há
-contrato PRD nem autorização de Production nesta etapa.
+Banco Neon `futebol_prd` inicializado; migrations 001–005 já aplicadas, não repetir.
+Login restrito, grants e RLS verificados em conexões reais direta e pooled.
+Function `futebolapi` PRD implantada com as fontes DEV aprovadas e configuração
+PRD própria. Kinde usa `https://login.sabara.org`, audience PRD e cliente público
+exclusivo. Nenhum DSN administrativo entra na Function ou no frontend.
 
-Após aprovação, Codex pode preencher/revisar a configuração pública PRD, preparar
-a API PRD com CORS exato e configuração restrita, verificar build/testes/scanner
-e preparar a revisão do release. Implantação, DNS, push/merge e Pages somente
-com autorização específica posterior. O workflow local foi desacoplado das
-variáveis Supabase e continua bloqueado pelo build PRD incompleto; não foi executado.
-GitHub Pages recebe somente `dist/`, com release manual em `main` e SHA exato.
-Nenhuma assinatura, upgrade ou serviço pago foi adicionado.
+GitHub Pages recebe somente `dist/`, com release manual em `main` e SHA exato,
+no domínio `https://futebol.sabara.org/`. Operação e rollback em
+[`deployment/RELEASE.md`](deployment/RELEASE.md). Não há importação de dados ou
+contas Supabase, assinatura nova ou upgrade. O smoke público autenticado deve ser
+registrado no Handoff antes de declarar a migração concluída.

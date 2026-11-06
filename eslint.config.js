@@ -12,6 +12,8 @@ export default tseslint.config(
       'dist-dev',
       'dist-diagnostics',
       'node_modules',
+      '.tools/**',
+      '.local-backup/**',
       'src/lib/supabase/database.types.ts',
     ],
   },

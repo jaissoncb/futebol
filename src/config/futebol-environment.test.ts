@@ -12,7 +12,8 @@ describe('explicit public Futebol environments', () => {
     }
   })
   it('blocks the incomplete PRD contract and every reused Test identifier without revealing values', () => {
-    expect(() => validateFutebolEnvironment(prd, 'prd')).toThrow('PRD bloqueado')
+    expect(validateFutebolEnvironment(prd, 'prd')).toEqual(prd)
+    expect(() => validateFutebolEnvironment({ ...prd, apiBaseUrl: null }, 'prd')).toThrow('PRD bloqueado')
     expect(() => validateFutebolEnvironment(dev, 'prd')).toThrow('PRD bloqueado')
     // Synthetic complete PRD metadata tests the boundary, not an approved contract.
     const synthetic = { environment: 'prd', appOrigin: 'https://futebol.sabara.org', apiBaseUrl: 'https://api.futebol.sabara.org',
