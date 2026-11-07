@@ -1,6 +1,6 @@
 import { ApiError, createApiClient } from './client'
 import type { GroupInput, GroupWorkspaceData, PlayerInput } from '../../groups/group-service'
-import type { Tables } from '../supabase/database.types'
+import type { Tables } from '../database.types'
 import type { SaveDrawPayload } from '../../matches/draw-payload'
 import { validateSavedMatch, type SavedMatch } from '../../matches/match-service'
 

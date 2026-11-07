@@ -1,35 +1,54 @@
-# Futebol Production
+# Futebol — publicação e rollback
 
-Frontend: https://futebol.sabara.org/ (GitHub Pages Free, raiz `/`).
-API: https://br-divine-sun-badnm7ch-futebolapi.compute.c-8.eu-central-1.aws.neon.tech/
-Projeto Neon: futebol-prd / withered-haze-60370136; production / br-divine-sun-badnm7ch;
-Frankfurt/PG17/Free. Banco futebol_prd; login futebol_api_prd_functions.
+Frontend ativo: **https://futebol.sabara.org/**, GitHub Pages, raiz `/`.
+Em 07/11/2026, GitHub confirmou `main` e o último deploy Pages bem-sucedido em
+`8c9f6ccfc24ecec19cca1bff2052dbca81003821`; GET público retornou HTTP 200.
+O usuário confirmou o funcionamento do aplicativo. Nesta limpeza não foi
+reexecutado smoke autenticado nem feita publicação.
 
-Migrations 001–005 já aplicadas. Não repetir, limpar ou recriar roles. Banco e
-login reais direto/pooled passaram nos grants/RLS. Verificador corrigido para evitar
-colisão entre variável PLPGSQL e alias de catálogo; nenhuma policy foi alterada.
+Arquitetura atual e credenciais: [OPERATIONS.md](OPERATIONS.md).
+API PRD: Function `futebolapi`, Node 24, branch `br-divine-sun-badnm7ch` do
+projeto `futebol-prd`. Banco `futebol_prd`, login restrito
+`futebol_api_prd_functions`; migrations 001–005 já aplicadas. Não repetir.
 
-API versão1: ZIP aprovado 510bf79183fa4025d5ceb36849606b22cf845b4541d732888270cb98dc71202e,
-Node24. Somente FUTEBOL_RUNTIME_CONFIG, DATABASE_URL, DATABASE_URL_UNPOOLED.
-Ambas URLs restritas, TLS verificado; chave de gestão nunca entra no runtime.
-Health200, sem Bearer401, rota DEV404, CORS permitido204 e origem indevida403.
-Smoke autenticado de /me, grupo/jogadores, sorteio/save/histórico/logout deve ser
-registrado no Handoff após publicação pública; não se declara pelo health.
+## Publicação de frontend
 
-Configurações JSON são públicas. Segredos ficam em memória/storage Neon; nunca
-.env/argv/Git/chat. Operador scripts/neon-prd-release.ps1 recebe chave temporária
-Project-scoped PRD em campo oculto, recupera senha existente, verifica banco e
-aguarda comando público com runId/sequence em diretório ignorado. Não possui
-provisionamento de banco ou modo de alteração de senha. Não repetir POST incerto.
+1. Conferir diretório, remote `jaissoncb/futebol`, branch, status e SHA. Revisar
+   somente o escopo autorizado, preservando alterações locais preexistentes.
+2. Com dependências do lockfile instaladas, executar `pnpm build` (Production,
+   scanner embutido), `pnpm verify:artifact` e testes locais afetados.
+   Não publicar `dist-dev/`, diagnósticos, fontes, `.env`, secrets ou backups.
+3. Commit/push não publica automaticamente. O workflow
+   `.github/workflows/ci-pages.yml` executa CI em push para `main` e pull request.
+   Instala com lockfile congelado, executa checks e guarda o build validado.
+4. Quando uma publicação estiver autorizada e necessária, executar o workflow
+   manualmente **em `main`**, com `expected_sha` igual ao SHA completo de 40
+   caracteres. SHA divergente ou branch diferente bloqueia o release.
+5. O mesmo run baixa o artefato pelo ID, revalida seu digest e publica somente
+   esse conteúdo. Registrar SHA/run/digest e verificar o resultado Pages e a
+   página pública. Repetir smoke autenticado apenas se necessário e autorizado.
 
-Build: pnpm build; pnpm verify:artifact; pnpm test:release-build. O teste de release
-opera em dist PRD e mantém fixtures negativas sem recompilar DEV. Artefato local
-validado: digest40ce3def483c518ddf73897bece2d11d02a97a9929e83f756234dc0fb96bd8a5.
-Workflow ci-pages.yml: dispatch manual em main com expected_sha igual ao SHA completo.
-DNS e Pages já usam futebol.sabara.org / jaissoncb.github.io; não alterar sabara.org.
+DNS, domínio customizado e configurações Pages existentes não precisam de
+reconfiguração. Nenhuma variável ou secret Supabase é necessária ao workflow.
+Uma limpeza sem alteração necessária de comportamento pode ficar em branch,
+com commit e push de revisão, mantendo o deploy funcional atual.
 
-Publicação anterior é a entrada Supabase desse mesmo repositório/domínio, com
-main anterior e1cbfeff5a166c301917a953fde2da20f4f08217. Preservar esse SHA para
-rollback revisado e os dados Supabase intactos. Substituir somente o artefato Pages
-após checks; não excluir serviços, projetos ou dados antigos. Eventuais outras
-rotas antigas devem ser identificadas e retiradas somente após smoke público PASS.
+## Rollback
+
+O ponto confirmado desta rodada é `8c9f6ccfc24ecec19cca1bff2052dbca81003821`,
+que já usa Kinde/Neon. Registrar o novo ponto após cada publicação aprovada.
+
+Preferir um commit de reversão das mudanças de frontend em `main`, preservando
+o histórico. Validar o build contra os contratos atuais da API/banco e publicar
+pelo mesmo dispatch com SHA exato. Um artefato anterior só pode ser usado após
+revisão de procedência, configuração PRD e compatibilidade; não presumir que
+artefatos Actions antigos ainda estejam disponíveis (retenção de 30 dias).
+
+O SHA `e1cbfeff5a166c301917a953fde2da20f4f08217` corresponde ao Futebol antigo
+e permanece apenas no histórico Git. **Não é rollback operacional**: o projeto
+Supabase Futebol Brasil (`tfnjbhstfiuqvenofvdb`) foi excluído definitivamente.
+Não recriar esse serviço nem retornar à autenticação ou configuração antigas.
+
+Rollback de frontend não reverte o banco nem a Function. A API implantada e seus
+grants/RLS ficam preservados. Qualquer mudança remota de API, credenciais ou
+schema exige autorização própria; não executar inicializadores para rollback.

@@ -22,7 +22,6 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "node scripts/test-e2e.mjs",
     "test:bundle-security": "node --test scripts/test-bundle-security.mjs",
     "test:workflow": "node --test scripts/release-workflow.node.mjs scripts/verify-pages-artifact.node.mjs",
     "test:release-build": "node scripts/test-release-build.mjs",
@@ -31,7 +30,6 @@
   },
   "dependencies": {
     "@kinde-oss/kinde-auth-react": "5.13.1",
-    "@supabase/supabase-js": "2.116.0",
     "jose": "6.2.12",
     "pg": "8.23.1",
     "react": "19.3.0",

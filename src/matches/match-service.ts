@@ -1,5 +1,5 @@
-import { isApiServices, type FutebolDataClient } from '../lib/data-client'
-import type { Tables } from '../lib/supabase/database.types'
+import { type FutebolDataClient } from '../lib/data-client'
+import type { Tables } from '../lib/database.types'
 import type { SaveDrawPayload } from './draw-payload'
 import { validateAdjustment } from '../draw/adjustments'
 
@@ -8,45 +8,18 @@ export type SavedMatch = {
   assignments: Tables<'team_assignments'>[]; runs: Tables<'draw_runs'>[]
 }
 export const HISTORY_PAGE_SIZE = 50
-export const SAVE_TIMEOUT_MS = 20_000
 
 export async function saveMatchDraw(client: FutebolDataClient, id: string, payload: SaveDrawPayload): Promise<string> {
-  if (isApiServices(client)) return client.saveDraw(id, payload)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), SAVE_TIMEOUT_MS)
-  try {
-    const { data, error } = await client.rpc('save_match_draw', { target_match_id: id, payload }).abortSignal(controller.signal)
-    if (error) throw error
-    if (data !== id) throw new Error('Resposta de salvamento inválida.')
-    return data
-  } finally { clearTimeout(timeout) }
+  return client.saveDraw(id, payload)
 }
 
 export async function loadMatchHistory(client: FutebolDataClient, groupId: string, page = 0) {
-  if (isApiServices(client)) return client.history(groupId, page)
-  const { data, error } = await client.from('matches').select('*').eq('group_id', groupId).eq('status', 'drawn')
-    .order('match_date', { ascending: false }).order('match_time', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false }).order('id', { ascending: false })
-    .range(page * HISTORY_PAGE_SIZE, (page + 1) * HISTORY_PAGE_SIZE - 1)
-  if (error) throw error
-  return data ?? []
+  return client.history(groupId, page)
 }
 
-/** Scoped, RLS-protected reads. Historical data never comes from players. */
+/** Read one authorized graph snapshot through the API, never the current roster. */
 export async function loadSavedMatch(client: FutebolDataClient, groupId: string, id: string): Promise<SavedMatch> {
-  if (isApiServices(client)) return client.savedMatch(groupId, id)
-  const [m, p, t, a, r] = await Promise.all([
-    client.from('matches').select('*').eq('group_id', groupId).eq('id', id).eq('status', 'drawn').single(),
-    client.from('match_players').select('*').eq('group_id', groupId).eq('match_id', id).order('player_name_snapshot'),
-    client.from('teams').select('*').eq('group_id', groupId).eq('match_id', id).order('team_index'),
-    client.from('team_assignments').select('*').eq('group_id', groupId).eq('match_id', id),
-    client.from('draw_runs').select('*').eq('group_id', groupId).eq('match_id', id).order('run_number'),
-  ])
-  const error = m.error ?? p.error ?? t.error ?? a.error ?? r.error
-  if (error) throw error
-  if (!m.data) throw new Error('Partida indisponível.')
-  const saved = { match: m.data, participants: p.data ?? [], teams: t.data ?? [], assignments: a.data ?? [], runs: r.data ?? [] }
-  return validateSavedMatch(saved)
+  return client.savedMatch(groupId, id)
 }
 
 export function validateSavedMatch(saved: SavedMatch): SavedMatch {

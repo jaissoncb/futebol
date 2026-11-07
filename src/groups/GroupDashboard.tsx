@@ -67,7 +67,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
     setLoading(true)
     setError(null)
     try {
-      const data = await loadGroupWorkspace(client, userId)
+      const data = await loadGroupWorkspace(client)
       setGroups(data.groups)
       setPlayers(data.players)
       setSelectedGroupId((current) => {
@@ -79,7 +79,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
     } finally {
       setLoading(false)
     }
-  }, [client, userId])
+  }, [client])
 
   useEffect(() => {
     let cancelled = false
@@ -94,7 +94,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
       return () => { cancelled = true }
     }
 
-    void loadGroupWorkspace(client, userId)
+    void loadGroupWorkspace(client)
       .then((data) => {
         if (cancelled) return
         setGroups(data.groups)
@@ -295,7 +295,7 @@ function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submitting.current || disabled) return
-    if (!client) return setError('A conexão com o Supabase não está configurada.')
+    if (!client) return setError('A conexão com o Futebol não está configurada neste ambiente.')
     submitting.current = true; setBusy(true); onBusyChange?.(true)
     setError(null)
     const form = new FormData(event.currentTarget)
@@ -346,7 +346,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submitting.current) return
-    if (!client) return setError('A conexão com o Supabase não está configurada.')
+    if (!client) return setError('A conexão com o Futebol não está configurada neste ambiente.')
     submitting.current = true; setBusy(true); onBusyChange(true)
     setError(null)
     const form = new FormData(event.currentTarget)

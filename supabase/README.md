@@ -1,36 +1,21 @@
-# Supabase local do Futebol
+# Supabase Futebol — arquivo histórico encerrado
 
-Esta pasta contém migrations, políticas RLS, grants, testes e auditorias da aplicação Futebol. O identificador Docker local é `futebol`; o projeto Supabase remoto existente continua sendo a referência de produção, mas nenhum estado local de vínculo é versionado ou copiado entre workspaces.
+O projeto Supabase Futebol Brasil (`tfnjbhstfiuqvenofvdb`) foi excluído
+definitivamente, conforme confirmação do usuário no painel e na conta. O Futebol
+antigo foi substituído por GitHub Pages + Sabará ID/Kinde + Neon PostgreSQL + Neon
+Functions. Operação atual: [OPERATIONS.md](../deployment/OPERATIONS.md).
 
-## Validação local
+Esta pasta preserva somente migrations, testes SQL, auditorias e decisões de
+segurança como evidência histórica. Não integra o build, o CI ou a implantação
+atual. A migration `20261005165705_keepalive.sql` registra a função antiga; não é
+uma automação em execução. Não há workflow keep-alive ativo no repositório.
 
-Com Node.js 22+, Docker local e a CLI oficial, consulte primeiro a versão e a ajuda dos comandos antes de iniciar o ambiente:
+Configuração CLI, seed e runners executáveis antigos foram retirados. Não aplicar
+este SQL ao Neon, não recriar o projeto nem restaurar o antigo ambiente local.
+O histórico Git preserva a implementação completa para consulta. Os bancos Neon
+existentes usam `database/`, com identidade e permissões próprias.
 
-```powershell
-pnpm dlx supabase@2.117.0 --version
-pnpm dlx supabase@2.117.0 --help
-pnpm dlx supabase@2.117.0 db --help
-pnpm dlx supabase@2.117.0 test --help
-pnpm dlx supabase@2.117.0 start
-pnpm dlx supabase@2.117.0 db reset --local
-pnpm dlx supabase@2.117.0 test db --local supabase/tests/database
-```
-
-O `db reset --local` prova que as migrations constroem o banco do zero. Os testes pgTAP verificam o contrato, grants, criação atômica e isolamento RLS.
-
-Depois do reset e dos testes pgTAP:
-
-```powershell
-node supabase/tests/audit-phase8-integrity.mjs
-node supabase/tests/hardening-upgrade.mjs
-node supabase/tests/save-match-draw-concurrency.mjs
-node scripts/test-draw-contract.mjs
-pnpm test:e2e
-```
-
-Não execute `supabase link`, `supabase db push` ou qualquer comando remoto sem autorização explícita. Os testes locais usam somente o container `supabase_db_futebol` e revertem suas fixtures.
-
-## Decisões de integridade
+## Decisões de integridade da implementação antiga
 
 - `create_group` cria o grupo e o membership `owner` na mesma transação, sempre a partir de `auth.uid()`.
 - Helpers RLS ficam no schema não exposto `private`, têm `search_path` fixo e evitam consultar `group_members` por uma policy recursiva.

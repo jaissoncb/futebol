@@ -1,6 +1,6 @@
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import { MatchWorkspace } from './MatchWorkspace'
 import * as service from './match-service'
 import * as sharing from './share-result'
@@ -8,7 +8,7 @@ import { group, players, saved } from './test-fixtures'
 
 vi.mock('./match-service', async (original) => ({ ...await original<typeof service>(), loadMatchHistory: vi.fn(), loadSavedMatch: vi.fn(), saveMatchDraw: vi.fn() }))
 vi.mock('./share-result', async (original) => ({ ...await original<typeof sharing>(), shareSavedResult: vi.fn() }))
-const client = {} as FutebolSupabaseClient
+const client = {} as FutebolDataClient
 beforeEach(() => {
   vi.resetAllMocks()
   vi.mocked(service.loadMatchHistory).mockResolvedValue([saved.match])

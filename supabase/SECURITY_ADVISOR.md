@@ -1,5 +1,10 @@
 # Security Advisor disposition
 
+> Registro histórico da implementação Supabase encerrada. O projeto Futebol
+> Brasil foi excluído definitivamente; este texto não descreve infraestrutura
+> ativa nem solicita consultas ou alterações remotas. Operação atual:
+> [GitHub Pages, Kinde e Neon](../deployment/OPERATIONS.md).
+
 ## Fase 8B — `public.save_match_draw(uuid, jsonb)` (validação LOCAL)
 
 **Disposition:** fronteira SECURITY DEFINER intencional. Migration

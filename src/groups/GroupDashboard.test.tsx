@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GroupDashboard } from './GroupDashboard'
 import * as service from './group-service'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import * as matches from '../matches/match-service'
 
 vi.mock('../matches/match-service', async (original) => ({
@@ -15,7 +15,7 @@ vi.mock('./group-service', async (original) => ({
   createPlayer: vi.fn(), updatePlayer: vi.fn(),
 }))
 
-const client = {} as FutebolSupabaseClient
+const client = {} as FutebolDataClient
 const group: service.GroupWithRole = {
   id: 'a', name: 'Quarta', role: 'owner', sport: 'futsal', default_players_on_court: 5,
   created_by: 'user', created_at: '', updated_at: '',

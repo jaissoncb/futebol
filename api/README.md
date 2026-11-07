@@ -1,4 +1,11 @@
-# Futebol DEV API
+# Futebol API — registros de implementação DEV
+
+> Estado vigente: frontend em GitHub Pages, Sabará ID/Kinde e API em Neon
+> Functions com Neon PostgreSQL, nos ambientes DEV e PRD existentes.
+> Operação e credenciais: [OPERATIONS.md](../deployment/OPERATIONS.md).
+> Release e rollback: [RELEASE.md](../deployment/RELEASE.md).
+> As etapas abaixo são registros históricos; referências a PRD não implantado
+> ou preparação pendente não descrevem o estado atual. Não repetir provisionamento.
 
 ## Local Neon Functions port (stage 1, not deployed)
 

@@ -13,10 +13,9 @@ dist-diagnostics/
 coverage/
 *.log
 
-# Local environment files; retain the public template
+# Local environment files
 .env
 .env.*
-!.env.example
 
 # Local tools and Codex instructions
 .local-backup/
@@ -25,6 +24,6 @@ coverage/
 AGENTS.override.md
 scripts/test-frontend-preview.mjs
 
-# Supabase local state
+# Historical local Supabase state (never version credentials)
 supabase/.branches/
 supabase/.temp/

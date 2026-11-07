@@ -2,7 +2,23 @@
 
 Aplicação para organizar partidas entre amigos, gerenciar grupos e jogadores,
 sortear times equilibrados e salvar o histórico. Repositório `jaissoncb/futebol`;
-domínio planejado `https://futebol.sabara.org/`, sempre na raiz.
+publicado em **https://futebol.sabara.org/**, sempre na raiz `/`.
+
+## Arquitetura em operação
+
+GitHub Pages serve o frontend React/PWA. O Sabará ID fornece login pelo Kinde;
+o frontend chama a API em Neon Functions, que acessa o Neon PostgreSQL com login
+restrito, grants explícitos e RLS. DEV e PRD têm configurações e recursos separados.
+O navegador não acessa PostgreSQL diretamente. Sabará Account é apenas o portal
+externo de gestão da conta.
+
+O Supabase **Futebol Brasil** (`tfnjbhstfiuqvenofvdb`) foi excluído definitivamente,
+conforme confirmação do usuário no painel e na conta. A implementação antiga foi
+substituída. Não há recriação, importação de contas/dados nem rollback para ela.
+As migrations e auditorias em [`supabase/`](supabase/README.md) são arquivo histórico.
+
+Operação vigente: [`deployment/OPERATIONS.md`](deployment/OPERATIONS.md).
+Publicação e rollback: [`deployment/RELEASE.md`](deployment/RELEASE.md).
 
 ## Prévia DEV
 
@@ -39,11 +55,11 @@ como link de gestão da conta.
 - `deployment/frontend-prd.json`: metadados públicos próprios de Kinde e API PRD.
   `pnpm build` gera o artefato Production e recusa contrato incompleto, sem fallback Test.
 - `src/main.tsx` abre o frontend Futebol com as telas/regras existentes. Diagnósticos,
-  probes, autenticação legada e SDK Supabase ficam fora de seu grafo de build.
+  probes e ferramentas de operação ficam fora de seu grafo de build.
 - `pnpm build:dev` verifica grafo, PWA, configuração emitida e scanner de segredos.
   `node scripts/verify-pages-artifact.mjs dist-dev` verifica o pacote estático.
-- `pnpm test:release-build` verifica o bloqueio PRD e as barreiras do artefato DEV
-  já compilado. Não publica nada nem acessa serviços remotos.
+- `pnpm test:release-build` verifica o artefato PRD e fixtures negativas de
+  configuração. Não publica nada nem acessa serviços remotos.
 
 Vite não lê arquivos `.env` nem expõe variáveis `VITE_*` nesta entrada. Nenhum
 Client Secret, token, chave Neon, DSN ou senha pertence ao frontend/Git.
@@ -56,11 +72,13 @@ partidas/salvamentos pendentes. Base, manifest, worker e HashRouter usam `/`.
 `pnpm dev:diagnostics` abre a entrada antiga de diagnósticos Kinde em localhost:5173,
 apontando para a API **local** em localhost:8787. `pnpm build:diagnostics` gera
 `dist-diagnostics/`, ignorado pelo Git. Não use esse artefato para publicação.
-Os runners de banco e o E2E Supabase são históricos; não são a validação desta
-entrada e não devem ser executados contra DEV preservado. Fontes e migrations
-legadas permanecem disponíveis; não há migração de usuários, senhas ou dados.
+SDK, login, adaptadores, configuração local e runners Supabase foram removidos.
+Os contratos de domínio compartilhados com Neon estão em
+`src/lib/database.types.ts`. Os scripts de banco Neon existentes não fazem parte
+do build e não devem ser executados contra bancos já inicializados.
 
-A API validada e seus scripts estão documentados em `deployment/README.md`.
+A API e seus scripts têm registros históricos em `api/README.md` e
+`deployment/README.md`; as preparações antigas não substituem o guia operacional.
 Não repita provisionamento, deploy ou smoke remoto concluído.
 
 ## Production
@@ -73,6 +91,7 @@ exclusivo. Nenhum DSN administrativo entra na Function ou no frontend.
 
 GitHub Pages recebe somente `dist/`, com release manual em `main` e SHA exato,
 no domínio `https://futebol.sabara.org/`. Operação e rollback em
-[`deployment/RELEASE.md`](deployment/RELEASE.md). Não há importação de dados ou
-contas Supabase, assinatura nova ou upgrade. O smoke público autenticado deve ser
-registrado no Handoff antes de declarar a migração concluída.
+[`deployment/RELEASE.md`](deployment/RELEASE.md). Production foi confirmada no
+GitHub Pages no SHA `8c9f6ccfc24ecec19cca1bff2052dbca81003821` em 07/11/2026;
+site HTTP 200. O usuário confirmou o funcionamento autenticado. Esta limpeza não
+reexecuta login, smoke de escrita, migrations ou deploy.

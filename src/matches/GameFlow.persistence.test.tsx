@@ -2,11 +2,11 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GameFlow } from '../draw/GameFlow'
 import * as service from './match-service'
-import type { FutebolSupabaseClient } from '../lib/supabase/client'
+import type { FutebolDataClient } from '../lib/data-client'
 import { group, players } from './test-fixtures'
 
 vi.mock('./match-service', async (original) => ({ ...await original<typeof service>(), saveMatchDraw: vi.fn() }))
-const client = {} as FutebolSupabaseClient
+const client = {} as FutebolDataClient
 const saveMock = vi.mocked(service.saveMatchDraw)
 beforeEach(() => { saveMock.mockReset(); saveMock.mockImplementation((_client, id) => Promise.resolve(id)) })
 afterEach(() => vi.restoreAllMocks())

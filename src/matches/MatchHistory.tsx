@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
 import type { GroupWithRole } from '../groups/group-service'
-import type { Tables } from '../lib/supabase/database.types'
+import type { Tables } from '../lib/database.types'
 import { HISTORY_PAGE_SIZE, loadMatchHistory, loadSavedMatch, type SavedMatch } from './match-service'
 import { formatMatchDate, shareSavedResult } from './share-result'
 

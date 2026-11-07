@@ -10,7 +10,7 @@ describe('domain services through Futebol API', () => {
     const transport = vi.fn<typeof fetch>().mockImplementation((url) => Promise.resolve(Response.json(
       (url as URL).pathname === '/workspace' ? { groups: [group], players } : { id: group.id })))
     const services = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('synthetic-memory-access'), transport)
-    expect(await loadGroupWorkspace(services, 'must-not-be-forwarded')).toEqual({ groups: [group], players })
+    expect(await loadGroupWorkspace(services)).toEqual({ groups: [group], players })
     const input = { name: 'Fixture', sport: 'futsal', defaultPlayersOnCourt: 1 }
     expect(await createGroup(services, input)).toBe(group.id)
     await updateGroup(services, group.id, input)
