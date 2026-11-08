@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import type { FutebolDataClient } from '../lib/data-client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
 import { GroupSwitcher } from './GroupSwitcher'
+import { readSelectedGroup, rememberSelectedGroup } from './selected-group'
 import {
   createGroup,
   createPlayer,
@@ -44,6 +45,10 @@ const POSITION_LABELS: Record<PreferredPosition, string> = {
 const ROLE_LABELS = { owner: 'Proprietário', admin: 'Administrador', member: 'Membro' } as const
 
 export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboardProps) {
+  return <GroupDashboardContent key={userId} client={client} userId={userId} onAttemptChange={onAttemptChange} />
+}
+
+function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboardProps) {
   const [groups, setGroups] = useState<GroupWithRole[]>([])
   const [players, setPlayers] = useState<Player[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
@@ -53,9 +58,13 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
   const [showSettings, setShowSettings] = useState(false)
   const [editingPlayer, setEditingPlayer] = useState<Player | 'new' | null>(null)
   const [matchAttemptPending, setMatchAttemptPending] = useState(false)
+  const [matchDraftDirty, setMatchDraftDirty] = useState(false)
   const [formPending, setFormPending] = useState(false)
   const navigationLocked = matchAttemptPending || formPending
-  useEffect(() => { onAttemptChange?.(navigationLocked) }, [navigationLocked, onAttemptChange])
+  useEffect(() => { onAttemptChange?.(navigationLocked || matchDraftDirty) }, [navigationLocked, matchDraftDirty, onAttemptChange])
+  useEffect(() => {
+    if (!loading && !error) rememberSelectedGroup(userId, selectedGroupId)
+  }, [userId, selectedGroupId, loading, error])
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!client) {
@@ -67,11 +76,18 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
     setLoading(true)
     setError(null)
     try {
+      // Creating a group can also request a switch. Cancelling keeps the draft
+      // and still refreshes the roster/groups after the successful creation.
+      const switchGroup = preferredGroupId && preferredGroupId !== selectedGroupId
+      const preferred = switchGroup && matchDraftDirty
+        && !window.confirm('Há alterações não salvas na partida. Trocar de grupo e descartar o rascunho?')
+        ? undefined : preferredGroupId
       const data = await loadGroupWorkspace(client)
       setGroups(data.groups)
       setPlayers(data.players)
+      if (preferred && preferred !== selectedGroupId && data.groups.some(group => group.id === preferred)) setMatchDraftDirty(false)
       setSelectedGroupId((current) => {
-        const requested = preferredGroupId ?? current
+        const requested = preferred ?? current ?? readSelectedGroup(userId)
         return data.groups.some((group) => group.id === requested) ? requested : (data.groups[0]?.id ?? null)
       })
     } catch {
@@ -79,7 +95,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
     } finally {
       setLoading(false)
     }
-  }, [client])
+  }, [client, userId, selectedGroupId, matchDraftDirty])
 
   useEffect(() => {
     let cancelled = false
@@ -99,7 +115,8 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
         if (cancelled) return
         setGroups(data.groups)
         setPlayers(data.players)
-        setSelectedGroupId(data.groups[0]?.id ?? null)
+        const preferred = readSelectedGroup(userId)
+        setSelectedGroupId(data.groups.find((group) => group.id === preferred)?.id ?? data.groups[0]?.id ?? null)
       })
       .catch(() => {
         if (!cancelled) setError('Não foi possível carregar seus grupos. Tente novamente.')
@@ -183,7 +200,11 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
       ) : null}
 
       <GroupSwitcher groups={groups} selectedId={selectedGroupId} disabled={navigationLocked}
-        onSelect={id => { setSelectedGroupId(id); setEditingPlayer(null); setShowSettings(false) }} />
+        onSelect={id => {
+          if (id === selectedGroupId || navigationLocked) return
+          if (matchDraftDirty && !window.confirm('Há alterações não salvas na partida. Trocar de grupo e descartar o rascunho?')) return
+          setMatchDraftDirty(false); setSelectedGroupId(id); setEditingPlayer(null); setShowSettings(false)
+        }} />
 
       {selectedGroup ? (
         <>
@@ -219,7 +240,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
           ) : null}
 
           <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status">Carregando partidas…</p>}>
-            <MatchWorkspace key={selectedGroup.id} client={client} group={selectedGroup} players={selectedPlayers} onAttemptChange={setMatchAttemptPending} />
+            <MatchWorkspace key={selectedGroup.id} client={client} group={selectedGroup} players={selectedPlayers} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} />
           </Suspense></MatchModuleBoundary>
 
           <section className="players-section">

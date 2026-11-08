@@ -7,6 +7,7 @@ import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
 import { FutebolRoot } from './FutebolRoot'
 import dev from '../../deployment/frontend-dev.json'
 import { validateFutebolEnvironment } from '../config/futebol-environment'
+import { readSelectedGroup, rememberSelectedGroup } from '../groups/selected-group'
 
 const config = validateFutebolEnvironment(dev, 'dev')
 const profileId = 'd0000000-0000-0000-0000-000000000001'
@@ -31,7 +32,7 @@ function callbacks() {
 
 describe('public Futebol session boundary', () => {
   beforeEach(() => {
-    vi.clearAllMocks(); localStorage.clear(); window.history.replaceState({}, '', '/#/')
+    vi.clearAllMocks(); localStorage.clear(); sessionStorage.clear(); window.history.replaceState({}, '', '/#/')
     mocks.auth.isAuthenticated = true
     mocks.auth.getAccessToken.mockResolvedValue('synthetic-memory-access')
     mocks.auth.logout.mockResolvedValue(undefined)
@@ -63,6 +64,7 @@ describe('public Futebol session boundary', () => {
     }
   })
   it('aborts pending private access on logout, clears only this session and rejects late data', async () => {
+    rememberSelectedGroup(profileId, 'group-preference')
     let release!: (value: Response) => void
     const pending = new Promise<Response>(resolve => { release = resolve })
     const request = vi.fn<typeof fetch>().mockReturnValue(pending); vi.stubGlobal('fetch', request)
@@ -71,6 +73,7 @@ describe('public Futebol session boundary', () => {
     await waitFor(() => expect(request).toHaveBeenCalledOnce())
     await userEvent.setup().click(screen.getByRole('button', { name: 'Sair' }))
     expect(mocks.auth.logout).toHaveBeenCalledWith()
+    expect(readSelectedGroup(profileId)).toBeNull()
     expect(destroy).toHaveBeenCalled()
     expect(request.mock.calls[0]![1]?.signal?.aborted).toBe(true)
     await act(async () => { release(Response.json({ id: profileId })); await pending })
@@ -132,7 +135,9 @@ describe('public Futebol session boundary', () => {
     render(<FutebolRoot config={config} session={session} />)
     await screen.findByRole('button', { name: 'Criar grupo' })
     expect(channels[0]?.name).toBe('futebol-dev-session')
+    rememberSelectedGroup(profileId, 'group-in-this-tab')
     await act(async () => { channels[0]?.onmessage?.(new MessageEvent('message', { data: 'logout' })); await Promise.resolve() })
+    expect(readSelectedGroup(profileId)).toBeNull()
     expect(destroy).toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
     expect(mocks.auth.logout).not.toHaveBeenCalled()

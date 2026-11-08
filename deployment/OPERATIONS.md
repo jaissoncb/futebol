@@ -1,7 +1,11 @@
 # Futebol — operação vigente
 
-Estado confirmado em 07/11/2026. Aplicação publicada e funcionando, conforme
-confirmação do usuário. Frontend em GitHub Pages; Sabará ID/Kinde para identidade;
+Frontend publicado em 07/11/2026 e auditado em 08/11/2026 no SHA
+`7b314022eced7eab1e9f48bdf01c87da5b62a46d`, versão nominal `0.1.0`,
+run Pages `42366705868`; evidências e digests em [RELEASE.md](RELEASE.md).
+A Fase 3A não publica alterações. A revisão efetivamente implantada da Function
+não foi obtida independentemente; o SHA do frontend não a certifica.
+Frontend em GitHub Pages; Sabará ID/Kinde para identidade;
 API em Neon Functions; dados em Neon PostgreSQL. Nenhum serviço novo é necessário.
 
 ## Ambientes
@@ -49,6 +53,21 @@ As migrations `database/001` a `005` já foram aplicadas; não repetir.
 Segredos não pertencem a JSON versionado, `.env`, argumentos, logs, commits ou chat.
 Tokens do navegador ficam em memória; a transação OAuth temporária tem namespace
 Futebol e TTL. Não há cache de dados privados no service worker.
+
+A preferência de grupo contém somente IDs internos de usuário/grupo em
+`sessionStorage` por aba, sempre validada contra o workspace autenticado e
+limpa no logout local ou comunicado por outra aba. Outro usuário não reutiliza
+a preferência anterior. Storage indisponível não impede a seleção em memória.
+A preferência não concede acesso nem armazena tokens, jogadores ou rascunhos.
+Logout remove o conteúdo privado da interface; a política do MVP aceita a janela
+residual de validade de Bearer emitido, sem promessa de revogação imediata.
+
+Rascunhos pedem confirmação ao trocar de grupo/sair e aviso nativo na recarga.
+Cancelar mantém os dados na tela; não há persistência do rascunho. Abrir histórico
+mantém a partida montada. Salvamento incerto permanece congelado, com UUID e
+payload estáveis; abandonar a tentativa continua exigindo confirmação específica.
+O histórico oferece cópia direta com feedback, além do compartilhamento nativo.
+Cancelamento do compartilhamento não aciona cópia silenciosa.
 
 O operador PRD já existente (`scripts/neon-prd-release.ps1`/`.mjs`) recebe uma
 chave temporária Project-scoped exclusivamente Futebol PRD por entrada oculta;

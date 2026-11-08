@@ -15,7 +15,7 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
   return { playersOnCourt, teams: result.teams.map((team) => ({ playerIds: [...team.playerIds], reserveIds: [...team.reserveIds] })) }
 }
 
-export function GameFlow({ group, players, client = null, onSaved, onAttemptChange }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void }) {
+export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void }) {
   const [step, setStep] = useState<GameStep>('details')
   const [config, setConfig] = useState<GameConfig>({ name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
   const [selected, setSelected] = useState<string[]>([])
@@ -26,6 +26,9 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const [runs, setRuns] = useState<DrawResult[]>([])
   const [drawContext, setDrawContext] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>('idle')
+  const [draftChanged, setDraftChanged] = useState(false)
+  const dirty = draftChanged && saveState !== 'saved'
+  useEffect(() => { onDraftChange?.(dirty) }, [dirty, onDraftChange])
   const attempt = useRef<{ id: string; payload: SaveDrawPayload } | null>(null)
   const [frozenAttempt, setFrozenAttempt] = useState<{ id: string; payload: SaveDrawPayload } | null>(null)
   const submitting = useRef(false)
@@ -33,11 +36,11 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { heading.current?.focus() }, [step, error, saveState])
   useEffect(() => {
-    if (saveState !== 'saving' && saveState !== 'error') return
+    if (!dirty && saveState !== 'saving' && saveState !== 'error') return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [saveState])
+  }, [dirty, saveState])
   if (group.role !== 'owner' && group.role !== 'admin') return null
   const eligible = players.filter((player) => player.active && player.group_id === group.id)
   const selectedEligible = selected.filter((id) => eligible.some((p) => p.id === id))
@@ -51,7 +54,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   })) : eligible
 
   function invalidate() { setResult(null); setAdjustment(null); setRuns([]); setDrawContext('') }
-  function beginGame(next: GameConfig) { if (JSON.stringify(next) !== JSON.stringify(config)) invalidate(); setConfig(next); setError(null); setStep('participants') }
+  function beginGame(next: GameConfig) { setDraftChanged(true); if (JSON.stringify(next) !== JSON.stringify(config)) invalidate(); setConfig(next); setError(null); setStep('participants') }
   function input() { return { players: eligible.filter((p) => selected.includes(p.id)).map(toDrawPlayer), playersOnCourt: config.playersOnCourt, teamCount: config.teamCount } }
   async function draw(isReroll = false) {
     if (drawing.current || locked) return
@@ -86,7 +89,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     onAttemptChange?.(false)
     if (stale) { invalidate(); setStep('participants') }
   }
-  return <section className="panel draw-panel" aria-label="Novo jogo">
+  return <section className="panel draw-panel" aria-label="Novo jogo" onChange={() => setDraftChanged(true)}>
     <div className="game-flow-heading"><div><p className="eyebrow">Novo jogo</p><h2 ref={heading} tabIndex={-1}>{step === 'details' ? 'Configure a partida' : step === 'participants' ? 'Quem vai jogar?' : 'Times sorteados'}</h2></div><p className="game-flow-step" aria-label={`Etapa ${step === 'details' ? 1 : step === 'participants' ? 2 : 3} de 3`}>{step === 'details' ? '1 de 3' : step === 'participants' ? '2 de 3' : '3 de 3'}</p></div>
     <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'O jogo existe apenas nesta tela até você salvar e aceitar o sorteio.'}</p>
     {step === 'details' ? <Details initial={config} onContinue={beginGame} /> : null}

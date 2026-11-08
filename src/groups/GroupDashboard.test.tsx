@@ -4,6 +4,7 @@ import { GroupDashboard } from './GroupDashboard'
 import * as service from './group-service'
 import type { FutebolDataClient } from '../lib/data-client'
 import * as matches from '../matches/match-service'
+import { FutebolWorkspace } from '../frontend/FutebolWorkspace'
 
 vi.mock('../matches/match-service', async (original) => ({
   ...await original<typeof matches>(), loadMatchHistory: vi.fn(), loadSavedMatch: vi.fn(), saveMatchDraw: vi.fn(),
@@ -26,8 +27,90 @@ const player: service.Player = {
 }
 
 beforeEach(() => {
+  sessionStorage.clear()
   vi.resetAllMocks()
   vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group], players: [player] })
+})
+
+afterEach(() => vi.restoreAllMocks())
+
+it('criar grupo também permite cancelar a troca e mantém a partida digitada', async () => {
+  const user = userEvent.setup(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  const view = render(<GroupDashboard client={client} userId="user" />)
+  await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Continuar aqui')
+  await user.click(screen.getByRole('button', { name: 'Novo grupo' }))
+  await user.type(screen.getByLabelText('Nome', { exact: true }), 'Novo destino')
+  vi.mocked(service.createGroup).mockResolvedValue('b')
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group, { ...group, id: 'b', name: 'Novo destino' }], players: [player] })
+  await user.click(screen.getByRole('button', { name: 'Salvar grupo' }))
+  await screen.findByRole('button', { name: 'Novo destino' })
+  expect(confirm).toHaveBeenCalled()
+  expect(screen.getByRole('heading', { name: 'Quarta' })).toBeInTheDocument()
+  expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Continuar aqui')
+  view.unmount()
+})
+
+it('cancelar logout preserva o rascunho; confirmar encerra e recarga dispara aviso antes de sair', async () => {
+  const user = userEvent.setup(), onLogout = vi.fn().mockResolvedValue(undefined)
+  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  render(<FutebolWorkspace services={client} internalId="user" onLogout={onLogout} loggingOut={false} sessionNotice={null} environment="dev" />)
+  await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Não perder')
+  const unload = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(unload)
+  expect(unload.defaultPrevented).toBe(true)
+  await user.click(screen.getByRole('button', { name: 'Sair' }))
+  expect(onLogout).not.toHaveBeenCalled()
+  expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Não perder')
+  confirm.mockReturnValue(true)
+  await user.click(screen.getByRole('button', { name: 'Sair' }))
+  expect(onLogout).toHaveBeenCalledOnce()
+})
+
+it('restaura o último grupo válido após recarga e ignora preferência de outro usuário ou grupo removido', async () => {
+  const user = userEvent.setup()
+  const groups = [group, { ...group, id: 'b', name: 'Outro grupo' }]
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups, players: [player] })
+  let view = render(<GroupDashboard client={client} userId="user" />)
+  await user.click(await screen.findByRole('button', { name: 'Outro grupo' }))
+  expect(screen.getByRole('heading', { name: 'Outro grupo' })).toBeInTheDocument()
+  view.unmount()
+  view = render(<GroupDashboard client={client} userId="user" />)
+  expect(await screen.findByRole('heading', { name: 'Outro grupo' })).toBeInTheDocument()
+  view.rerender(<GroupDashboard client={client} userId="other-user" />)
+  expect(screen.queryByRole('heading', { name: 'Outro grupo' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('heading', { name: 'Quarta' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  view.unmount()
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group], players: [player] })
+  render(<GroupDashboard client={client} userId="other-user" />)
+  expect(await screen.findByRole('heading', { name: 'Quarta' })).toBeInTheDocument()
+})
+
+it('cancela troca de grupo preservando formulário ainda não enviado, seleção e ajustes do rascunho', async () => {
+  const user = userEvent.setup(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group, { ...group, id: 'b', name: 'Outro grupo' }], players: [player, { ...player, id: 'p2', name: 'Bia' }] })
+  render(<GroupDashboard client={client} userId="user" />)
+  await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Rascunho protegido')
+  await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Rascunho protegido')
+  await user.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
+  await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
+  await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  expect(screen.getAllByRole('checkbox').every(input => (input as HTMLInputElement).checked)).toBe(true)
+  await user.click(screen.getByRole('button', { name: 'Sortear times' }))
+  const region = await screen.findByRole('region', { name: 'Resultado do sorteio' })
+  await user.click(within(region).getAllByRole('button', { name: 'Selecionar para ajuste' })[0]!)
+  await user.click(within(region).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
+  const adjusted = region.textContent
+  await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  expect(region.textContent).toBe(adjusted)
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('alterações não salvas'))
+  confirm.mockReturnValue(true)
+  await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  expect(await screen.findByRole('heading', { name: 'Outro grupo' })).toBeInTheDocument()
+  await user.click(screen.getByRole('button', { name: 'Quarta' }))
+  expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('')
+  expect(matches.saveMatchDraw).not.toHaveBeenCalled()
 })
 
 it('cria o primeiro grupo e seleciona o resultado', async () => {

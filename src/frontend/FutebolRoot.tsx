@@ -10,6 +10,7 @@ import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/se
 import type { FutebolFrontendConfiguration } from '../config/futebol-environment'
 import { PwaUpdate } from '../PwaUpdate'
 import { FutebolWorkspace } from './FutebolWorkspace'
+import { clearSelectedGroup } from '../groups/selected-group'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
@@ -76,6 +77,7 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => {
       if (event.data === 'logout') {
+        clearSelectedGroup()
         closePrivateRequests(); session.transaction.destroySession(); setLocallySignedOut(true)
         setWorkspace(null); setStatus(null); setBusy(false)
       }
@@ -152,6 +154,7 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
   async function logout() {
     if (logoutLock.current) return
     logoutLock.current = true; setLoggingOut(true); setLocallySignedOut(true)
+    clearSelectedGroup()
     closePrivateRequests(); setWorkspace(null); setStatus(null); setBusy(true)
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
     channel?.postMessage('logout'); channel?.close()

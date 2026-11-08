@@ -23,6 +23,24 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('persistência real no fluxo da Fase 7', () => {
+  it('retira o aviso de saída somente após salvamento confirmado e notifica rascunho limpo', async () => {
+    const user = userEvent.setup(), onDraftChange = vi.fn()
+    const view = render(<GameFlow client={client} group={group} players={players} onDraftChange={onDraftChange} />)
+    const pristine = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(pristine)
+    expect(pristine.defaultPrevented).toBe(false)
+    await result(user)
+    expect(onDraftChange).toHaveBeenLastCalledWith(true)
+    const draft = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(draft)
+    expect(draft.defaultPrevented).toBe(true)
+    await save(user)
+    expect(onDraftChange).toHaveBeenLastCalledWith(false)
+    const saved = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(saved)
+    expect(saved.defaultPrevented).toBe(false)
+    view.unmount()
+  })
   it.each(['owner', 'admin'] as const)('gera UUID antes da chamada e finaliza uma única vez (%s)', async (role) => {
     const user = userEvent.setup(), onSaved = vi.fn()
     const uuid = vi.spyOn(crypto, 'randomUUID')

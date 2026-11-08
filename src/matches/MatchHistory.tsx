@@ -3,7 +3,7 @@ import type { FutebolDataClient } from '../lib/data-client'
 import type { GroupWithRole } from '../groups/group-service'
 import type { Tables } from '../lib/database.types'
 import { HISTORY_PAGE_SIZE, loadMatchHistory, loadSavedMatch, type SavedMatch } from './match-service'
-import { formatMatchDate, shareSavedResult } from './share-result'
+import { copySavedResult, formatMatchDate, shareSavedResult } from './share-result'
 
 export function MatchHistory({ client, group, selectedId, onSelect }: { client: FutebolDataClient | null; group: GroupWithRole; selectedId: string | null; onSelect: (id: string | null) => void }) {
   const [revision, setRevision] = useState(0)
@@ -50,6 +50,7 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
   const [error, setError] = useState(false)
   const [revision, setRevision] = useState(0)
   const [sharing, setSharing] = useState(false)
+  const [copying, setCopying] = useState(false)
   const [shareNotice, setShareNotice] = useState<string | null>(null)
   const shareLock = useRef(false)
   useEffect(() => { detail.current?.focus() }, [loading, error])
@@ -76,6 +77,15 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
     } catch { setShareNotice('Não foi possível compartilhar ou copiar. Tente novamente.') }
     finally { shareLock.current = false; setSharing(false) }
   }
+  async function copy() {
+    if (!saved || shareLock.current) return
+    shareLock.current = true; setCopying(true); setShareNotice(null)
+    try {
+      await copySavedResult(saved)
+      setShareNotice('Resultado copiado para a área de transferência.')
+    } catch { setShareNotice('Não foi possível copiar o resultado. Permita o acesso à área de transferência e tente novamente.') }
+    finally { shareLock.current = false; setCopying(false) }
+  }
   return <section ref={detail} tabIndex={-1} aria-label="Partida salva" aria-busy={loading}>
     <button className="quiet-action" onClick={onBack}>Voltar ao histórico</button>
     {loading ? <p role="status">Carregando partida…</p> : error ? <div role="alert"><p>Não foi possível carregar a partida salva. Ela pode estar indisponível ou incompleta.</p><button className="quiet-action" onClick={() => setRevision((n) => n + 1)}>Tentar novamente</button></div> : saved ? <>
@@ -84,11 +94,14 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
       <p className="adjustment-status">Salva · Sorteio aceito</p>
       <div className="draw-teams">{saved.teams.map((team) => <article className="draw-team" key={team.id}><h3>Time {team.name}</h3>{([false, true] as const).map((reserve) => <section key={String(reserve)} aria-label={`${reserve ? 'Reservas' : 'Titulares'} do Time ${team.name}`}><h4>{reserve ? 'Reservas' : 'Titulares'}</h4><ul>{saved.assignments.filter((a) => a.team_id === team.id && a.starts_as_reserve === reserve).map((a) => {
         const p = saved.participants.find((p) => p.player_id === a.player_id)!
-        return <li key={p.player_id}>{p.player_nickname_snapshot || p.player_name_snapshot}{p.player_nickname_snapshot ? ` (${p.player_name_snapshot})` : ''} · Nível {Number(p.skill_rating_snapshot).toFixed(1)}{p.is_goalkeeper_snapshot ? ' · Goleiro' : ''}{p.preferred_position_snapshot ? ` · ${POSITION_LABELS[p.preferred_position_snapshot]}` : ''}{a.assignment_source === 'manual' ? ' · Ajuste manual' : ''}</li>
+        return <li key={p.player_id}>{p.player_nickname_snapshot || p.player_name_snapshot}{p.player_nickname_snapshot ? ` (${p.player_name_snapshot})` : ''} · Nível {Number(p.skill_rating_snapshot).toFixed(1)}{p.is_goalkeeper_snapshot ? ' · Goleiro' : ''}{p.preferred_position_snapshot && !(p.is_goalkeeper_snapshot && p.preferred_position_snapshot === 'goalkeeper') ? ` · ${POSITION_LABELS[p.preferred_position_snapshot]}` : ''}{a.assignment_source === 'manual' ? ' · Ajuste manual' : ''}</li>
       })}</ul>{!saved.assignments.some((a) => a.team_id === team.id && a.starts_as_reserve === reserve) ? <p>Nenhum</p> : null}</section>)}</article>)}</div>
       <details className="saved-draw-data"><summary>Informações dos sorteios ({saved.runs.length})</summary><ol>{saved.runs.map((run) => <li key={run.id}>Sorteio {run.run_number}{run.accepted ? ' · Aceito (sorteio-base)' : ' · Não aceito'}<br />Código do sorteio: <code>{run.seed}</code><br />Versão: <code>{run.algorithm_version}</code> · Diferença entre médias: {Number(run.balance_score).toFixed(3)}</li>)}</ol></details>
       <p className="game-flow-note">A escalação acima é o resultado final salvo, incluindo ajustes manuais. O código identifica o sorteio-base.</p>
-      <button className="solid-action" disabled={sharing} onClick={() => void share()}>{sharing ? 'Compartilhando…' : 'Compartilhar resultado'}</button>
+      <div className="game-flow-actions">
+        <button className="quiet-action" disabled={sharing || copying} onClick={() => void copy()}>{copying ? 'Copiando…' : 'Copiar resultado'}</button>
+        <button className="solid-action" disabled={sharing || copying} onClick={() => void share()}>{sharing ? 'Compartilhando…' : 'Compartilhar resultado'}</button>
+      </div>
       {shareNotice ? <p role="status">{shareNotice}</p> : null}
     </> : null}
   </section>

@@ -1,8 +1,19 @@
-import { savedResultText, shareSavedResult } from './share-result'
+import { copySavedResult, savedResultText, shareSavedResult } from './share-result'
 import { saved } from './test-fixtures'
 
 describe('compartilhamento textual salvo', () => {
   afterEach(() => vi.unstubAllGlobals())
+  it('copia diretamente mesmo quando o compartilhamento nativo está disponível', async () => {
+    const share = vi.fn(), writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { share, clipboard: { writeText } })
+    await copySavedResult(saved)
+    expect(writeText).toHaveBeenCalledWith(savedResultText(saved))
+    expect(share).not.toHaveBeenCalled()
+  })
+  it.each(['missing', 'denied', 'cancelled'])('expõe falha na cópia direta: %s', async (mode) => {
+    vi.stubGlobal('navigator', mode === 'missing' ? {} : { clipboard: { writeText: vi.fn().mockRejectedValue(new DOMException('unavailable', mode === 'cancelled' ? 'AbortError' : 'NotAllowedError')) } })
+    await expect(copySavedResult(saved)).rejects.toThrow()
+  })
   it('inclui nome, data, horário, times, titulares/reservas e snapshots', () => {
     const text = savedResultText(saved)
     for (const value of ['Futebol quinta', '12/09/2026 · 20:00', 'Time Azul', 'Time Vermelho', 'Titulares:', 'Reservas:', 'P1']) expect(text).toContain(value)

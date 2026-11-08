@@ -46,8 +46,16 @@ Login/cadastro continuam no Sabará ID pelo SDK Kinde, com PKCE S256 e tokens
 somente em memória. Apenas a transação OAuth temporária persiste em namespace
 Futebol, com TTL. Reload/nova aba podem exigir novo login. Logout cancela pedidos
 privados, remove dados da tela e sinaliza as outras abas Futebol desse ambiente;
-não solicita encerramento global de sessões. O portal Account continua apenas
-como link de gestão da conta.
+não solicita encerramento global de sessões. A política aceita do MVP não promete
+revogação imediata de Bearer já emitido após logout. O portal Account continua
+apenas como link de gestão da conta.
+
+O último grupo selecionado é lembrado nesta aba por IDs de usuário/grupo em
+`sessionStorage`, após conferir a participação pela API; logout limpa a preferência.
+Não são armazenados tokens, nomes de grupos, jogadores ou rascunhos para isso.
+Alterações de partida ainda não salvas pedem confirmação antes de trocar de grupo
+ou sair. Recarregar/fechar usa o aviso nativo do navegador. Tentativas incertas
+continuam congeladas para retry; verifique o histórico antes de abandoná-las.
 
 ## Configuração e build
 
@@ -92,6 +100,9 @@ exclusivo. Nenhum DSN administrativo entra na Function ou no frontend.
 GitHub Pages recebe somente `dist/`, com release manual em `main` e SHA exato,
 no domínio `https://futebol.sabara.org/`. Operação e rollback em
 [`deployment/RELEASE.md`](deployment/RELEASE.md). Production foi confirmada no
-GitHub Pages no SHA `8c9f6ccfc24ecec19cca1bff2052dbca81003821` em 07/11/2026;
-site HTTP 200. O usuário confirmou o funcionamento autenticado. Esta limpeza não
-reexecuta login, smoke de escrita, migrations ou deploy.
+GitHub Pages no SHA `7b314022eced7eab1e9f48bdf01c87da5b62a46d`, run
+[`42366705868`](https://github.com/jaissoncb/futebol/actions/runs/42366705868),
+publicado em 07/11/2026 e auditado em 08/11/2026. A versão nominal é `0.1.0`;
+SHA/run/digests em RELEASE identificam a publicação. A revisão efetivamente
+implantada da Neon Function não foi certificada de forma independente.
+As correções da Fase 3A são locais e não representam nova publicação.

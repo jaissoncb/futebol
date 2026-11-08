@@ -7,7 +7,7 @@ import * as sharing from './share-result'
 import { group, players, saved } from './test-fixtures'
 
 vi.mock('./match-service', async (original) => ({ ...await original<typeof service>(), loadMatchHistory: vi.fn(), loadSavedMatch: vi.fn(), saveMatchDraw: vi.fn() }))
-vi.mock('./share-result', async (original) => ({ ...await original<typeof sharing>(), shareSavedResult: vi.fn() }))
+vi.mock('./share-result', async (original) => ({ ...await original<typeof sharing>(), shareSavedResult: vi.fn(), copySavedResult: vi.fn() }))
 const client = {} as FutebolDataClient
 beforeEach(() => {
   vi.resetAllMocks()
@@ -22,6 +22,36 @@ async function detail(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('histórico e detalhe da Fase 7', () => {
+  it.each([true, false])('mostra posição e função sem duplicar Goleiro (flag %s), preservando snapshot', async (flag) => {
+    const user = userEvent.setup()
+    const fixture = structuredClone(saved)
+    fixture.participants[0]!.is_goalkeeper_snapshot = flag
+    fixture.participants[0]!.preferred_position_snapshot = 'goalkeeper'
+    const original = structuredClone(fixture)
+    vi.mocked(service.loadSavedMatch).mockResolvedValue(fixture)
+    render(<MatchWorkspace client={client} group={{ ...group, role: 'member' }} players={[]} />)
+    await detail(user)
+    const row = screen.getByText(/P1 \(Pessoa 1\).*Nível/)
+    expect(row.textContent?.match(/Goleiro/g)).toHaveLength(1)
+    expect(row).toHaveTextContent('Nível 3.0')
+    expect(fixture).toEqual(original)
+  })
+  it.each(['success', 'denied', 'cancelled'])('informa cópia direta e mantém detalhe: %s', async (outcome) => {
+    const user = userEvent.setup()
+    if (outcome !== 'success') vi.mocked(sharing.copySavedResult).mockRejectedValueOnce(new DOMException('private', outcome === 'cancelled' ? 'AbortError' : 'NotAllowedError'))
+    render(<MatchWorkspace client={client} group={{ ...group, role: 'member' }} players={[]} />)
+    await detail(user)
+    await user.click(screen.getByRole('button', { name: 'Copiar resultado' }))
+    expect(await screen.findByRole('status')).toHaveTextContent(outcome === 'success' ? 'Resultado copiado para a área de transferência.' : 'Não foi possível copiar o resultado.')
+    expect(sharing.copySavedResult).toHaveBeenCalledWith(saved)
+    expect(sharing.shareSavedResult).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: 'Futebol quinta' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copiar resultado' })).toBeEnabled()
+    if (outcome !== 'success') {
+      await user.click(screen.getByRole('button', { name: 'Copiar resultado' }))
+      expect(await screen.findByRole('status')).toHaveTextContent('Resultado copiado')
+    }
+  })
   it.each(['member', 'owner', 'admin'] as const)('permite leitura do próprio grupo para %s sem controles de alteração no detalhe', async (role) => {
     const user = userEvent.setup()
     render(<MatchWorkspace client={client} group={{ ...group, role }} players={players.map((p) => ({ ...p, name: 'Nome ATUAL', nickname: 'Atual', skill_rating: 1 }))} />)

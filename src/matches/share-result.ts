@@ -30,7 +30,11 @@ export async function shareSavedResult(saved: SavedMatch): Promise<'shared' | 'c
     try { await navigator.share({ title: saved.match.name || 'Partida de futebol', text }); return 'shared' }
     catch (cause) { if (typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError') return 'cancelled' }
   }
-  if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Compartilhamento indisponível.')
-  await navigator.clipboard.writeText(text)
+  await copySavedResult(saved)
   return 'copied'
+}
+
+export async function copySavedResult(saved: SavedMatch): Promise<void> {
+  if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Cópia indisponível.')
+  await navigator.clipboard.writeText(savedResultText(saved))
 }
