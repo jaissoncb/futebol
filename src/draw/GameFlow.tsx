@@ -9,6 +9,8 @@ import { saveMatchDraw } from '../matches/match-service'
 import type { RepeatDraft } from '../matches/repeat-match'
 import { searchPlayers } from '../groups/player-search'
 import { TeamCard } from './TeamCard'
+import { ConfirmationDialog } from '../ConfirmationDialog'
+import { useConfirmation } from '../useConfirmation'
 
 type GameStep = 'details' | 'participants' | 'result'
 
@@ -19,6 +21,7 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
 }
 
 export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft }) {
+  const { confirm, dialogProps } = useConfirmation()
   const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
   const [config, setConfig] = useState<GameConfig>(initialDraft?.config ?? { name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
   const [selected, setSelected] = useState<string[]>(initialDraft?.selectedIds ?? [])
@@ -61,7 +64,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   function input() { return { players: eligible.filter((p) => selected.includes(p.id)).map(toDrawPlayer), playersOnCourt: config.playersOnCourt, teamCount: config.teamCount } }
   async function draw(isReroll = false) {
     if (drawing.current || locked) return
-    if (isReroll && adjustment && result && !sameTeams(adjustment, editableResult(result, config.playersOnCourt)) && !window.confirm('Um novo sorteio descartará os ajustes manuais. Continuar?')) return
+    if (isReroll && adjustment && result && !sameTeams(adjustment, editableResult(result, config.playersOnCourt)) && !await confirm({ title: 'Sortear novamente?', message: 'Um novo sorteio descartará os ajustes manuais desta escalação.', action: 'Descartar ajustes e sortear' })) return
     drawing.current = true; setBusy(true); setError(null)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     try {
@@ -86,13 +89,14 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
       setError(attempt.current ? 'Não foi possível confirmar o salvamento. A partida pode já ter sido salva. Tente novamente com os mesmos dados; não crie outra cópia.' : 'Não foi possível preparar o salvamento. Confira os dados e tente novamente.')
     } finally { submitting.current = false }
   }
-  function abandon() {
-    if (!window.confirm('A resposta pode ter sido perdida após o salvamento. Verifique o histórico antes de abandonar: salvar novamente após editar poderá criar outra partida. Abandonar esta tentativa?')) return
+  async function abandon() {
+    if (!await confirm({ title: 'Abandonar esta tentativa?', message: 'A partida pode já ter sido salva. Verifique o histórico antes de abandonar: salvar novamente após editar poderá criar outra partida.', action: 'Abandonar e editar', cancel: 'Manter tentativa' })) return
     attempt.current = null; setFrozenAttempt(null); setSaveState('idle'); setError(null)
     onAttemptChange?.(false)
     if (stale) { invalidate(); setStep('participants') }
   }
   return <section className="panel draw-panel" aria-label="Novo jogo" onChange={() => setDraftChanged(true)}>
+    <ConfirmationDialog {...dialogProps} />
     <div className="game-flow-heading"><div><p className="eyebrow">Novo jogo</p><h2 ref={heading} tabIndex={-1}>{step === 'details' ? 'Configure a partida' : step === 'participants' ? 'Quem vai jogar?' : 'Times sorteados'}</h2></div><p className="game-flow-step" aria-label={`Etapa ${step === 'details' ? 1 : step === 'participants' ? 2 : 3} de 3`}>{step === 'details' ? '1 de 3' : step === 'participants' ? '2 de 3' : '3 de 3'}</p></div>
     <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'O jogo existe apenas nesta tela até você salvar e aceitar o sorteio.'}</p>
     {step === 'details' ? <Details initial={config} onContinue={beginGame} /> : null}
@@ -105,7 +109,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
       <p>{runs.length} sorteio(s) nesta partida. Somente o último será aceito.</p>
       {error ? <p className="form-status" role="alert">{error}</p> : null}
       <div className="save-draw-actions">{saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving'} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}</div>
-      {saveState === 'error' ? <button className="quiet-action" type="button" onClick={abandon}>Abandonar tentativa e editar</button> : null}
+      {saveState === 'error' ? <button className="quiet-action" type="button" onClick={() => void abandon()}>Abandonar tentativa e editar</button> : null}
       {saveState === 'saved' && onSaved && frozenAttempt ? <button className="quiet-action" type="button" onClick={() => onSaved(frozenAttempt.id)}>Ver partida salva</button> : null}
     </> : null}
   </section>

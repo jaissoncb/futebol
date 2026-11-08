@@ -39,7 +39,6 @@ describe('histórico e detalhe da Fase 7', () => {
   })
   it('mantém rascunho se repetição falha ou se o usuário cancela a substituição', async () => {
     const user = userEvent.setup()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(<MatchWorkspace client={client} group={group} players={players} />)
     await user.click(screen.getByLabelText(/Nome/)); await user.paste('Continuar aqui')
     vi.mocked(service.loadMatchHistory).mockRejectedValueOnce(new Error('private'))
@@ -47,11 +46,10 @@ describe('histórico e detalhe da Fase 7', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Seu rascunho foi mantido')
     expect(screen.getByLabelText(/Nome/)).toHaveValue('Continuar aqui')
     await user.click(screen.getByRole('button', { name: 'Repetir última partida' }))
+    await user.click(await screen.findByRole('button', { name: 'Continuar editando' }))
     await screen.findByRole('button', { name: 'Repetir última partida' })
-    expect(confirm).toHaveBeenCalled()
     expect(screen.getByLabelText(/Nome/)).toHaveValue('Continuar aqui')
     expect(service.saveMatchDraw).not.toHaveBeenCalled()
-    confirm.mockRestore()
   })
   it('filtra apenas o histórico carregado sem buscar novamente e oferece URL WhatsApp dos snapshots', async () => {
     const user = userEvent.setup()

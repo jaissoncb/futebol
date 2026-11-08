@@ -55,7 +55,13 @@ O último grupo selecionado é lembrado nesta aba por IDs de usuário/grupo em
 `sessionStorage`, após conferir a participação pela API; logout limpa a preferência.
 Não são armazenados tokens, nomes de grupos, jogadores ou rascunhos para isso.
 Alterações de partida ainda não salvas pedem confirmação antes de trocar de grupo
-ou sair. Recarregar/fechar usa o aviso nativo do navegador. Tentativas incertas
+ou sair. As confirmações internas usam um diálogo com o visual do Futebol,
+ações explícitas e foco inicial na opção que preserva os dados. Escape ou toque
+no fundo também preservam o rascunho. Não há `alert`, `confirm` ou `prompt` do
+navegador nos fluxos internos, inclusive na entrada antiga de diagnósticos.
+Recarregar/fechar usa o aviso `beforeunload` controlado pelo navegador, pois a
+página não pode substituí-lo por um diálogo próprio durante seu fechamento.
+Tentativas incertas
 continuam congeladas para retry; verifique o histórico antes de abandoná-las.
 
 ## Uso no celular
@@ -96,8 +102,11 @@ conversa e confirmar o envio. Cancelar o compartilhamento nativo não copia text
 Vite não lê arquivos `.env` nem expõe variáveis `VITE_*` nesta entrada. Nenhum
 Client Secret, token, chave Neon, DSN ou senha pertence ao frontend/Git.
 O worker armazena somente o shell estático; não há cache runtime de API, tokens,
-perfil ou dados privados. Atualização continua exigindo confirmação e respeita
-partidas/salvamentos pendentes. Base, manifest, worker e HashRouter usam `/`.
+perfil ou dados privados. Atualização depende da ação do usuário e respeita
+partidas/salvamentos pendentes. O botão Atualizar aplicativo executa a atualização
+diretamente, sem confirmação nativa adicional, e fica bloqueado enquanto houver
+rascunho, operação pendente ou atualização em andamento. Base, manifest, worker
+e HashRouter usam `/`.
 
 ## Ferramentas locais preservadas
 

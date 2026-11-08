@@ -4,6 +4,8 @@ import { MatchModuleBoundary } from './MatchModuleBoundary'
 import { GroupSwitcher } from './GroupSwitcher'
 import { readSelectedGroup, rememberSelectedGroup } from './selected-group'
 import { searchPlayers } from './player-search'
+import { ConfirmationDialog } from '../ConfirmationDialog'
+import { useConfirmation } from '../useConfirmation'
 import {
   createGroup,
   createPlayer,
@@ -50,6 +52,7 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
 }
 
 function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboardProps) {
+  const { confirm, dialogProps } = useConfirmation()
   const sectionPrefix = useId()
   const [playerSearch, setPlayerSearch] = useState({ groupId: '', query: '' })
   const [groups, setGroups] = useState<GroupWithRole[]>([])
@@ -83,7 +86,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
       // and still refreshes the roster/groups after the successful creation.
       const switchGroup = preferredGroupId && preferredGroupId !== selectedGroupId
       const preferred = switchGroup && matchDraftDirty
-        && !window.confirm('Há alterações não salvas na partida. Trocar de grupo e descartar o rascunho?')
+        && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })
         ? undefined : preferredGroupId
       const data = await loadGroupWorkspace(client)
       setGroups(data.groups)
@@ -98,7 +101,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
     } finally {
       setLoading(false)
     }
-  }, [client, userId, selectedGroupId, matchDraftDirty])
+  }, [client, userId, selectedGroupId, matchDraftDirty, confirm])
 
   useEffect(() => {
     let cancelled = false
@@ -184,6 +187,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
 
   return (
     <div className="workspace">
+      <ConfirmationDialog {...dialogProps} />
       <section className="workspace-heading">
         <div>
           <p className="eyebrow">Seus grupos</p>
@@ -210,11 +214,11 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
       ) : null}
 
       <GroupSwitcher groups={groups} selectedId={selectedGroupId} disabled={navigationLocked}
-        onSelect={id => {
+        onSelect={id => { void (async () => {
           if (id === selectedGroupId || navigationLocked) return
-          if (matchDraftDirty && !window.confirm('Há alterações não salvas na partida. Trocar de grupo e descartar o rascunho?')) return
+          if (matchDraftDirty && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })) return
           setMatchDraftDirty(false); setSelectedGroupId(id); setEditingPlayer(null); setShowSettings(false)
-        }} />
+        })() }} />
 
       {selectedGroup ? (
         <>

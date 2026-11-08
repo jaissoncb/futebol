@@ -5,9 +5,12 @@ import { GameFlow } from '../draw/GameFlow'
 import { MatchHistory } from './MatchHistory'
 import { loadMatchHistory, loadSavedMatch } from './match-service'
 import { repeatMatch, type RepeatDraft } from './repeat-match'
+import { ConfirmationDialog } from '../ConfirmationDialog'
+import { useConfirmation } from '../useConfirmation'
 
 /** Keep the draft mounted when history opens; a saved result is immutable. */
 export function MatchWorkspace({ client, group, players, onAttemptChange, onDraftChange, gameId, historyId }: { client: FutebolDataClient | null; group: GroupWithRole; players: Player[]; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; gameId?: string; historyId?: string }) {
+  const { confirm, dialogProps } = useConfirmation()
   const [open, setOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [session, setSession] = useState(0)
@@ -34,13 +37,14 @@ export function MatchWorkspace({ client, group, players, onAttemptChange, onDraf
       const last = await loadSavedMatch(client, group.id, rows[0].id)
       if (!alive.current || pending.current) return
       const next = repeatMatch(last, group.id, players)
-      if (dirty.current && !window.confirm('Há alterações não salvas. Substituir o rascunho pela última partida?')) return
+      if (dirty.current && !await confirm({ title: 'Substituir o rascunho?', message: 'Há alterações não salvas. A última partida será usada para preparar um novo rascunho.', action: 'Descartar e repetir partida' })) return
       setDraft(next); setSession(n => n + 1); setSaved(false); setOpen(false); setSelectedId(null)
       setRepeatNotice(`Novo rascunho baseado na última partida do histórico. Revise os participantes e toque em Sortear times.${next.unavailable ? ` ${next.unavailable} jogador(es) indisponível(is) não foram selecionados.` : ''}`)
     } catch { if (alive.current) setRepeatError('Não foi possível preparar a última partida. Seu rascunho foi mantido. Tente novamente.') }
     finally { loading.current = false; if (alive.current) setRepeating(false) }
   }
   return <>
+    <ConfirmationDialog {...dialogProps} />
     <section id={gameId} tabIndex={-1} className="game-workspace" aria-label="Partidas do grupo">
       {group.role !== 'member' ? <div className="repeat-game"><button className="quiet-action" disabled={repeating || attemptPending} onClick={() => void repeatLast()}>{repeating ? 'Preparando partida…' : 'Repetir última partida'}</button><small>Cria um rascunho com a data de hoje. O histórico permanece intacto.</small></div> : null}
       {repeatNotice ? <p className="notice" role="status">{repeatNotice}</p> : null}

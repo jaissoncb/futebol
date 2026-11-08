@@ -891,6 +891,15 @@ button:disabled, a[aria-disabled="true"] { cursor: not-allowed; }
   .player-avatar { width: 40px; height: 40px; }
 }
 /* Fase 5A: mobile sections preserve mounted drafts and keep all actions in flow. */
+.confirmation-dialog { width: min(440px, calc(100% - 32px)); max-height: calc(100svh - 32px); overflow: auto; padding: 24px; border: 1px solid var(--line); border-radius: 24px; background: white; color: var(--ink); box-shadow: 0 24px 80px #063f3240; }
+.confirmation-dialog::backdrop { background: #102a2380; }
+.confirmation-content h2 { margin: 0 0 12px; font-size: 1.3rem; }
+.confirmation-content p { margin: 0 0 24px; line-height: 1.6; color: #40574c; }
+.confirmation-actions { display: grid; gap: 10px; }
+.confirmation-actions button { min-height: 48px; border-radius: 12px; padding: 12px 16px; font: inherit; font-weight: 750; }
+.confirmation-cancel { border: 1px solid #a6c5b6; background: #edf7f1; color: #075b45; }
+.confirmation-discard { border: 1px solid #a33030; background: #a33030; color: white; }
+@media (max-width: 599px) { .confirmation-dialog { position: fixed; inset: auto 12px max(12px, env(safe-area-inset-bottom)); margin: 0; width: auto; max-width: none; padding: 20px; } }
 .workspace-nav { position: sticky; top: 0; z-index: 10; display: flex; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 16px; background: #f4f8f6; box-shadow: 0 4px 14px #063f3210; }
 .workspace-nav button { flex: 1; min-height: 44px; border: 0; border-radius: 11px; padding: 8px; background: white; color: var(--green-800); font-weight: 800; }
 .workspace-nav button:hover { background: var(--green-100); }

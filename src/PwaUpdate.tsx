@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 export function PwaUpdate({ pending }: { pending: boolean }) {
   const [available, setAvailable] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [updating, setUpdating] = useState(false)
+  const starting = useRef(false)
   const update = useRef<((reload?: boolean) => Promise<void>) | null>(null)
   useEffect(() => {
     if (!import.meta.env.PROD) return
@@ -14,11 +16,11 @@ export function PwaUpdate({ pending }: { pending: boolean }) {
   return available ? <aside className="notice pwa-update" aria-label="Atualização disponível">
     <p role="status">Há uma nova versão. Salve seus dados antes de atualizar.</p>
     {error ? <p role="alert">{error}</p> : null}
-    <button className="quiet-action" type="button" disabled={pending} onClick={() => {
-      if (window.confirm('Atualizar recarrega o aplicativo e descarta dados que ainda não foram salvos. Atualizar agora?')) {
-        setError(null)
-        void update.current?.(true).catch(() => setError('Não foi possível atualizar. Confira a conexão e tente novamente.'))
-      }
-    }}>Atualizar aplicativo</button>
+    <button className="quiet-action" type="button" disabled={pending || updating} onClick={() => {
+      if (pending || starting.current || !update.current) return
+      starting.current = true; setUpdating(true); setError(null)
+      void update.current(true).catch(() => setError('Não foi possível atualizar. Confira a conexão e tente novamente.'))
+        .finally(() => { starting.current = false; setUpdating(false) })
+    }}>{updating ? 'Atualizando…' : 'Atualizar aplicativo'}</button>
   </aside> : null
 }

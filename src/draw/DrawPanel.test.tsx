@@ -104,7 +104,6 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
 
   it('confirma reroll após ajuste e descarta a indicação de ajuste manual', async () => {
     const user = userEvent.setup()
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     await openParticipants(user)
     await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
     await user.click(screen.getByRole('button', { name: 'Sortear times' }))
@@ -112,7 +111,7 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
     await user.click(within(result).getAllByRole('button', { name: /^Selecionar para ajuste/ })[0]!)
     await user.click(within(result).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
     await user.click(within(result).getByRole('button', { name: 'Novo sorteio' }))
-    expect(confirm).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: 'Descartar ajustes e sortear' }))
     expect(await screen.findByText(/Diferença entre médias:/)).toBeInTheDocument()
     expect(screen.queryByText(/Ajustado manualmente/)).not.toBeInTheDocument()
     expect(within(result).queryByRole('button', { name: /^Cancelar ajuste/ })).not.toBeInTheDocument()

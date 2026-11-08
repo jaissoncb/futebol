@@ -35,7 +35,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 it('criar grupo também permite cancelar a troca e mantém a partida digitada', async () => {
-  const user = userEvent.setup(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  const user = userEvent.setup()
   const view = render(<GroupDashboard client={client} userId="user" />)
   // Wait for the real lazy match module before querying its form under parallel load.
   await act(async () => { await vi.dynamicImportSettled() })
@@ -45,8 +45,8 @@ it('criar grupo também permite cancelar a troca e mantém a partida digitada', 
   vi.mocked(service.createGroup).mockResolvedValue('b')
   vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group, { ...group, id: 'b', name: 'Novo destino' }], players: [player] })
   await user.click(screen.getByRole('button', { name: 'Salvar grupo' }))
+  await user.click(await screen.findByRole('button', { name: 'Continuar editando' }))
   await screen.findByRole('button', { name: 'Novo destino' })
-  expect(confirm).toHaveBeenCalled()
   expect(screen.getByRole('heading', { name: 'Quarta' })).toBeInTheDocument()
   expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Continuar aqui')
   view.unmount()
@@ -54,17 +54,17 @@ it('criar grupo também permite cancelar a troca e mantém a partida digitada', 
 
 it('cancelar logout preserva o rascunho; confirmar encerra e recarga dispara aviso antes de sair', async () => {
   const user = userEvent.setup(), onLogout = vi.fn().mockResolvedValue(undefined)
-  const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
   render(<FutebolWorkspace services={client} internalId="user" onLogout={onLogout} loggingOut={false} sessionNotice={null} environment="dev" />)
   await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Não perder')
   const unload = new Event('beforeunload', { cancelable: true })
   window.dispatchEvent(unload)
   expect(unload.defaultPrevented).toBe(true)
   await user.click(screen.getByRole('button', { name: 'Sair' }))
+  await user.click(screen.getByRole('button', { name: 'Continuar editando' }))
   expect(onLogout).not.toHaveBeenCalled()
   expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Não perder')
-  confirm.mockReturnValue(true)
   await user.click(screen.getByRole('button', { name: 'Sair' }))
+  await user.click(screen.getByRole('button', { name: 'Descartar e sair' }))
   expect(onLogout).toHaveBeenCalledOnce()
 })
 
@@ -89,15 +89,17 @@ it('restaura o último grupo válido após recarga e ignora preferência de outr
 })
 
 it('cancela troca de grupo preservando formulário ainda não enviado, seleção e ajustes do rascunho', async () => {
-  const user = userEvent.setup(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+  const user = userEvent.setup()
   vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group, { ...group, id: 'b', name: 'Outro grupo' }], players: [player, { ...player, id: 'p2', name: 'Bia' }] })
   render(<GroupDashboard client={client} userId="user" />)
   await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Rascunho protegido')
   await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Continuar editando' }))
   expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('Rascunho protegido')
   await user.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
   await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
   await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Continuar editando' }))
   expect(screen.getAllByRole('checkbox').every(input => (input as HTMLInputElement).checked)).toBe(true)
   await user.click(screen.getByRole('button', { name: 'Sortear times' }))
   const region = await screen.findByRole('region', { name: 'Resultado do sorteio' })
@@ -105,10 +107,11 @@ it('cancela troca de grupo preservando formulário ainda não enviado, seleção
   await user.click(within(region).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
   const adjusted = region.textContent
   await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  expect(screen.getByRole('alertdialog')).toHaveTextContent('alterações não salvas')
+  await user.click(screen.getByRole('button', { name: 'Continuar editando' }))
   expect(region.textContent).toBe(adjusted)
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('alterações não salvas'))
-  confirm.mockReturnValue(true)
   await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Descartar e trocar de grupo' }))
   expect(await screen.findByRole('heading', { name: 'Outro grupo' })).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Quarta' }))
   expect(screen.getByLabelText(/Nome.*opcional/)).toHaveValue('')
