@@ -7,10 +7,10 @@ export function formatMatchDate(value: string): string {
 
 export function savedResultText(saved: SavedMatch): string {
   const { match, participants, assignments } = saved
-  const lines = [match.name || 'Partida de futebol', `${formatMatchDate(match.match_date)}${match.match_time ? ` · ${match.match_time.slice(0, 5)}` : ''}`,
+  const lines = [`⚽ ${match.name || 'Partida de futebol'}`, `${formatMatchDate(match.match_date)}${match.match_time ? ` · ${match.match_time.slice(0, 5)}` : ''}`,
     `${match.team_count} times · ${match.players_on_court} em quadra por time`]
   for (const team of [...saved.teams].sort((a, b) => a.team_index - b.team_index)) {
-    lines.push('', `Time ${team.name}`)
+    lines.push('', `${['🔵', '🔴', '🟡'][team.team_index - 1] ?? '⚽'} Time ${team.name}`)
     for (const [reserve, label] of [[false, 'Titulares'], [true, 'Reservas']] as const) {
       lines.push(`${label}:`)
       const rows = assignments.filter((a) => a.team_id === team.id && a.starts_as_reserve === reserve)
@@ -22,6 +22,10 @@ export function savedResultText(saved: SavedMatch): string {
     }
   }
   return lines.join('\n')
+}
+
+export function whatsAppResultUrl(saved: SavedMatch): string {
+  return `https://wa.me/?text=${encodeURIComponent(savedResultText(saved))}`
 }
 
 export async function shareSavedResult(saved: SavedMatch): Promise<'shared' | 'copied' | 'cancelled'> {

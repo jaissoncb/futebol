@@ -6,6 +6,9 @@ import { localDateInputValue } from './local-date'
 import type { FutebolDataClient } from '../lib/data-client'
 import { buildDrawPayload, TEAM_NAMES, type GameConfig, type SaveDrawPayload } from '../matches/draw-payload'
 import { saveMatchDraw } from '../matches/match-service'
+import type { RepeatDraft } from '../matches/repeat-match'
+import { searchPlayers } from '../groups/player-search'
+import { TeamCard } from './TeamCard'
 
 type GameStep = 'details' | 'participants' | 'result'
 
@@ -15,10 +18,10 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
   return { playersOnCourt, teams: result.teams.map((team) => ({ playerIds: [...team.playerIds], reserveIds: [...team.reserveIds] })) }
 }
 
-export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void }) {
-  const [step, setStep] = useState<GameStep>('details')
-  const [config, setConfig] = useState<GameConfig>({ name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
-  const [selected, setSelected] = useState<string[]>([])
+export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft }) {
+  const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
+  const [config, setConfig] = useState<GameConfig>(initialDraft?.config ?? { name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
+  const [selected, setSelected] = useState<string[]>(initialDraft?.selectedIds ?? [])
   const [result, setResult] = useState<DrawResult | null>(null)
   const [adjustment, setAdjustment] = useState<AdjustmentState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -26,7 +29,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const [runs, setRuns] = useState<DrawResult[]>([])
   const [drawContext, setDrawContext] = useState('')
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>('idle')
-  const [draftChanged, setDraftChanged] = useState(false)
+  const [draftChanged, setDraftChanged] = useState(Boolean(initialDraft))
   const dirty = draftChanged && saveState !== 'saved'
   useEffect(() => { onDraftChange?.(dirty) }, [dirty, onDraftChange])
   const attempt = useRef<{ id: string; payload: SaveDrawPayload } | null>(null)
@@ -101,7 +104,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
       </fieldset>
       <p>{runs.length} sorteio(s) nesta partida. Somente o último será aceito.</p>
       {error ? <p className="form-status" role="alert">{error}</p> : null}
-      {saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving'} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}
+      <div className="save-draw-actions">{saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving'} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}</div>
       {saveState === 'error' ? <button className="quiet-action" type="button" onClick={abandon}>Abandonar tentativa e editar</button> : null}
       {saveState === 'saved' && onSaved && frozenAttempt ? <button className="quiet-action" type="button" onClick={() => onSaved(frozenAttempt.id)}>Ver partida salva</button> : null}
     </> : null}
@@ -114,9 +117,30 @@ function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (va
 }
 
 function Participants({ busy, config, error, players, selected, onBack, onDraw, onSelectedChange }: { busy: boolean; config: GameConfig; error: string | null; players: Player[]; selected: string[]; onBack: () => void; onDraw: () => void; onSelectedChange: (ids: string[]) => void }) {
+  const [query, setQuery] = useState('')
+  const visible = searchPlayers(players, query)
+  const visibleIds = new Set(visible.map(p => p.id))
+  const filtering = query.trim().length > 0
   if (players.length === 0) return <div className="empty-list"><p>Nenhum jogador ativo disponível.</p><span>Cadastre ou reative jogadores no elenco antes de criar o jogo.</span><button className="quiet-action" type="button" onClick={onBack}>Voltar à configuração</button></div>
   const toggle = (id: string, checked: boolean) => onSelectedChange(checked ? [...selected, id] : selected.filter((entry) => entry !== id))
-  return <div className="game-participants"><p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time</p><div className="draw-actions"><button className="quiet-action" type="button" disabled={busy} onClick={() => onSelectedChange(players.map((p) => p.id))}>Selecionar todos</button><button className="quiet-action" type="button" disabled={busy} onClick={() => onSelectedChange([])}>Limpar seleção</button></div><fieldset className="draw-controls" disabled={busy}><legend>Jogadores ativos</legend>{players.map((p) => <label className="draw-player-option" key={p.id}><input type="checkbox" checked={selected.includes(p.id)} onChange={(event) => toggle(p.id, event.target.checked)} /><span>{p.nickname || p.name} · Nível {Number(p.skill_rating).toFixed(1)}{p.is_goalkeeper ? ' · Goleiro' : ''}</span></label>)}</fieldset><p aria-live="polite">{selected.length} jogadores selecionados</p><p>Todos os selecionados entram em um time. Times incompletos e reservas por time são permitidos.</p>{error ? <p className="form-status" role="alert">{error}</p> : null}<div className="game-flow-actions"><button className="quiet-action" type="button" disabled={busy} onClick={onBack}>Voltar</button><button className="solid-action" type="button" disabled={busy || selected.length < config.teamCount} onClick={onDraw}>{busy ? 'Sorteando…' : 'Sortear times'}</button></div></div>
+  return <div className="game-participants">
+    <p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time</p>
+    <label className="search-field">Buscar participantes<input type="search" value={query} maxLength={80} placeholder="Nome ou apelido" disabled={busy} onChange={event => { event.stopPropagation(); setQuery(event.target.value) }} /></label>
+    <div className="draw-actions">
+      <button className="quiet-action" type="button" disabled={busy || !visible.length} onClick={() => onSelectedChange([...new Set([...selected, ...visible.map(p => p.id)])])}>{filtering ? `Selecionar encontrados (${visible.length})` : 'Selecionar todos'}</button>
+      <button className="quiet-action" type="button" disabled={busy} onClick={() => onSelectedChange(filtering ? selected.filter(id => !visibleIds.has(id)) : [])}>{filtering ? 'Desmarcar encontrados' : 'Limpar seleção'}</button>
+    </div>
+    <fieldset className="draw-controls" disabled={busy}><legend>Jogadores ativos</legend>{visible.map(p => <label className={`draw-player-option${selected.includes(p.id) ? ' is-selected' : ''}`} key={p.id}>
+      <input type="checkbox" checked={selected.includes(p.id)} onChange={event => toggle(p.id, event.target.checked)} />
+      <span>{p.nickname || p.name} · Nível {Number(p.skill_rating).toFixed(1)}{p.is_goalkeeper ? ' · Goleiro' : ''}{p.nickname ? <small className="player-full-name">{p.name}</small> : null}</span>
+    </label>)}</fieldset>
+    {!visible.length ? <p role="status">Nenhum jogador encontrado. Tente outro nome ou apelido.</p> : null}
+    <p className="selection-count" aria-live="polite">{selected.length} jogadores selecionados{filtering ? ` · ${visible.length} encontrados` : ''}</p>
+    {filtering && selected.some(id => !visibleIds.has(id)) ? <p className="game-flow-note">A busca não remove os jogadores já selecionados fora deste filtro.</p> : null}
+    <p className="game-flow-note">Mínimo de {config.teamCount} participantes. Todos entram em um time; times incompletos e reservas são permitidos.</p>
+    {error ? <p className="form-status" role="alert">{error}</p> : null}
+    <div className="game-flow-actions"><button className="quiet-action" type="button" disabled={busy} onClick={onBack}>Voltar</button><button className="solid-action" type="button" disabled={busy || selected.length < config.teamCount} onClick={onDraw}>{busy ? 'Sorteando…' : 'Sortear times'}</button></div>
+  </div>
 }
 
 function Results({ config, players, original, state, busy, locked, error, onChange, onReroll, onEditGame, onEditParticipants }: { config: GameConfig; players: Player[]; original: DrawResult; state: AdjustmentState; busy: boolean; locked: boolean; error: string | null; onChange: (state: AdjustmentState) => void; onReroll: () => void; onEditGame: () => void; onEditParticipants: () => void }) {
@@ -138,11 +162,11 @@ function Team({ team, index, players, selected, onSelect, onDrag, onDropTeam, on
   const court = team.playerIds.filter((id) => !team.reserveIds.includes(id)); const reserves = team.reserveIds
   const goalkeeperCount = team.playerIds.filter((id) => drawPlayers.get(id)?.isGoalkeeper).length
   const sum = team.playerIds.reduce((total, id) => total + (drawPlayers.get(id)?.skillRating ?? 0), 0); const missing = Math.max(0, state.playersOnCourt - team.playerIds.length)
-  return <article className="draw-team" onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropTeam(event, index)}><h3>Time {TEAM_NAMES[index]}</h3>{selected && selected.teamIndex !== index ? <button className="quiet-action" type="button" onClick={() => onApply(movePlayer(state, selected.teamIndex, selected.id, index, drawPlayers))}>Mover selecionado para este time</button> : null}<p>{team.playerIds.length} jogadores · Média {team.playerIds.length ? (sum / team.playerIds.length).toFixed(2) : '0.00'} · Soma {sum.toFixed(1)}</p><p>{goalkeeperCount} goleiro(s)</p>{goalkeeperCount === 0 ? <p className="team-warning">Sem goleiro disponível neste time.</p> : null}{missing > 0 ? <p className="team-warning">{team.playerIds.length}/{state.playersOnCourt} em quadra — precisa de {missing} jogador(es) emprestado(s)</p> : null}<Roster title="Em quadra" ids={court} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /><Roster title="Reservas" ids={reserves} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /></article>
+  return <TeamCard name={`Time ${TEAM_NAMES[index]}`} summary={`${team.playerIds.length} jogadores · Média ${team.playerIds.length ? (sum / team.playerIds.length).toFixed(2) : '0.00'} · ${goalkeeperCount} goleiro(s)`} onDragOver={event => event.preventDefault()} onDrop={event => onDropTeam(event, index)}>{selected && selected.teamIndex !== index ? <button className="quiet-action" type="button" onClick={() => onApply(movePlayer(state, selected.teamIndex, selected.id, index, drawPlayers))}>Mover selecionado para este time</button> : null}<p className="game-flow-note">Soma dos níveis: {sum.toFixed(1)}</p>{goalkeeperCount === 0 ? <p className="team-warning">Sem goleiro disponível neste time.</p> : null}{missing > 0 ? <p className="team-warning">{team.playerIds.length}/{state.playersOnCourt} em quadra — precisa de {missing} jogador(es) emprestado(s)</p> : null}<Roster title="Em quadra" ids={court} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /><Roster title="Reservas" ids={reserves} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /></TeamCard>
 }
 
 function Roster({ title, ids, teamIndex, players, selected, onSelect, onDrag, onDropPlayer, onApply, state, drawPlayers }: { title: string; ids: string[]; teamIndex: number; players: Player[]; selected: SelectedPlayer; onSelect: (value: SelectedPlayer) => void; onDrag: (value: SelectedPlayer) => void; onDropPlayer: (event: DragEvent<HTMLElement>, index: number, id: string) => void; onApply: (result: ReturnType<typeof movePlayer>) => void; state: AdjustmentState; drawPlayers: Map<string, DrawPlayer> }) {
-  return <section className="team-roster" aria-label={`${title} do Time ${TEAM_NAMES[teamIndex]}`}><h4>{title}</h4><ul>{ids.map((id) => { const player = players.find((entry) => entry.id === id)!; const isSelected = selected?.teamIndex === teamIndex && selected.id === id; const counterpart = selected && selected.teamIndex === teamIndex && selected.id !== id ? selected.id : null; return <li key={id} className={isSelected ? 'selected-player' : ''} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', id); event.dataTransfer.effectAllowed = 'move'; onDrag({ teamIndex, id }) }} onDragEnd={() => onDrag(null)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropPlayer(event, teamIndex, id)}><span>{playerName(player)} · Nível {Number(player.skill_rating).toFixed(1)}{player.is_goalkeeper ? ' · Goleiro' : ''}</span><div className="player-adjustments"><button className="quiet-action" type="button" aria-pressed={isSelected} onClick={() => onSelect(isSelected ? null : { teamIndex, id })}>{isSelected ? 'Cancelar ajuste' : 'Selecionar para ajuste'}</button>{selected && selected.teamIndex !== teamIndex ? <button className="quiet-action" type="button" onClick={() => onApply(swapPlayers(state, selected.teamIndex, selected.id, teamIndex, id, drawPlayers))}>Trocar com selecionado</button> : null}{counterpart ? <button className="quiet-action" type="button" onClick={() => onApply(swapCourtStatus(state, teamIndex, counterpart, id, drawPlayers))}>Trocar titular/reserva</button> : null}</div></li> })}</ul></section>
+  return <section className="team-roster" aria-label={`${title} do Time ${TEAM_NAMES[teamIndex]}`}><h4>{title}</h4><ul>{ids.map((id) => { const player = players.find((entry) => entry.id === id)!; const isSelected = selected?.teamIndex === teamIndex && selected.id === id; const counterpart = selected && selected.teamIndex === teamIndex && selected.id !== id ? selected.id : null; return <li key={id} className={isSelected ? 'selected-player' : ''} draggable onDragStart={(event) => { event.dataTransfer.setData('text/plain', id); event.dataTransfer.effectAllowed = 'move'; onDrag({ teamIndex, id }) }} onDragEnd={() => onDrag(null)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => onDropPlayer(event, teamIndex, id)}><span>{playerName(player)} · Nível {Number(player.skill_rating).toFixed(1)}{player.is_goalkeeper ? ' · Goleiro' : ''}</span><div className="player-adjustments"><button className="quiet-action" type="button" aria-label={`${isSelected ? 'Cancelar ajuste de' : 'Selecionar para ajuste'} ${playerName(player)}`} aria-pressed={isSelected} onClick={() => onSelect(isSelected ? null : { teamIndex, id })}>{isSelected ? 'Cancelar ajuste' : 'Selecionar para ajuste'}</button>{selected && selected.teamIndex !== teamIndex ? <button className="quiet-action" type="button" onClick={() => onApply(swapPlayers(state, selected.teamIndex, selected.id, teamIndex, id, drawPlayers))}>Trocar com selecionado</button> : null}{counterpart ? <button className="quiet-action" type="button" onClick={() => onApply(swapCourtStatus(state, teamIndex, counterpart, id, drawPlayers))}>Trocar titular/reserva</button> : null}</div></li> })}</ul></section>
 }
 
 function stringValue(form: FormData, name: string): string { const value = form.get(name); return typeof value === 'string' ? value : '' }

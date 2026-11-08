@@ -101,7 +101,7 @@ it('cancela troca de grupo preservando formulário ainda não enviado, seleção
   expect(screen.getAllByRole('checkbox').every(input => (input as HTMLInputElement).checked)).toBe(true)
   await user.click(screen.getByRole('button', { name: 'Sortear times' }))
   const region = await screen.findByRole('region', { name: 'Resultado do sorteio' })
-  await user.click(within(region).getAllByRole('button', { name: 'Selecionar para ajuste' })[0]!)
+  await user.click(within(region).getAllByRole('button', { name: /^Selecionar para ajuste/ })[0]!)
   await user.click(within(region).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
   const adjusted = region.textContent
   await user.click(screen.getByRole('button', { name: 'Outro grupo' }))
@@ -151,7 +151,7 @@ it.each(['member', 'admin'] as const)('respeita os controles do papel %s', async
   await screen.findByText('Ana')
   expect(screen.queryByRole('button', { name: 'Ajustar grupo' })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Adicionar' }) !== null).toBe(role === 'admin')
-  expect(screen.queryByRole('button', { name: 'Editar' }) !== null).toBe(role === 'admin')
+  expect(screen.queryByRole('button', { name: /^Editar / }) !== null).toBe(role === 'admin')
 })
 
 it('troca o formulário de jogador sem reutilizar os dados anteriores e permite desativar', async () => {
@@ -159,9 +159,9 @@ it('troca o formulário de jogador sem reutilizar os dados anteriores e permite 
   vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group], players: [player, { ...player, id: 'p2', name: 'Bia' }] })
   render(<GroupDashboard client={client} userId="user" />)
   await screen.findByText('Ana')
-  await user.click(within(screen.getByText('Ana').closest('li')!).getByRole('button', { name: 'Editar' }))
+  await user.click(within(screen.getByText('Ana').closest('li')!).getByRole('button', { name: /^Editar / }))
   expect(screen.getByLabelText('Nome')).toHaveValue('Ana')
-  await user.click(within(screen.getByText('Bia').closest('li')!).getByRole('button', { name: 'Editar' }))
+  await user.click(within(screen.getByText('Bia').closest('li')!).getByRole('button', { name: /^Editar / }))
   expect(screen.getByLabelText('Nome')).toHaveValue('Bia')
   await user.click(screen.getByLabelText('Jogador ativo'))
   await user.click(screen.getByRole('button', { name: 'Salvar jogador' }))
@@ -226,7 +226,7 @@ it('preserva retry durante recarga do elenco e bloqueia troca de grupo enquanto 
   expect(screen.getByRole('button', { name: 'Outro grupo' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Salvar grupo' })).toBeDisabled()
   const roster = screen.getByText('2 jogadores ativos').closest('section')!
-  await user.click(within(roster).getAllByRole('button', { name: 'Editar' })[0]!)
+  await user.click(within(roster).getAllByRole('button', { name: /^Editar / })[0]!)
   await user.click(screen.getByRole('button', { name: 'Salvar jogador' }))
   expect(await screen.findByRole('button', { name: 'Tentar salvar novamente' })).toBeEnabled()
   await user.click(screen.getByRole('button', { name: 'Tentar salvar novamente' }))

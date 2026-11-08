@@ -1,8 +1,9 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
 import { GroupSwitcher } from './GroupSwitcher'
 import { readSelectedGroup, rememberSelectedGroup } from './selected-group'
+import { searchPlayers } from './player-search'
 import {
   createGroup,
   createPlayer,
@@ -49,6 +50,8 @@ export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboa
 }
 
 function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboardProps) {
+  const sectionPrefix = useId()
+  const [playerSearch, setPlayerSearch] = useState({ groupId: '', query: '' })
   const [groups, setGroups] = useState<GroupWithRole[]>([])
   const [players, setPlayers] = useState<Player[]>([])
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
@@ -134,6 +137,13 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
     [players, selectedGroupId],
   )
   const canManagePlayers = selectedGroup?.role === 'owner' || selectedGroup?.role === 'admin'
+  const query = playerSearch.groupId === selectedGroupId ? playerSearch.query : ''
+  const visiblePlayers = searchPlayers(selectedPlayers, query)
+  function goTo(section: string) {
+    const target = document.getElementById(`${sectionPrefix}-${section}`)
+    target?.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+    target?.focus({ preventScroll: true })
+  }
 
   if (loading && groups.length === 0) {
     return <section className="workspace-state" aria-live="polite"><span className="spinner" aria-hidden="true" /><p>Carregando seus grupos…</p></section>
@@ -239,11 +249,16 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
             </section>
           ) : null}
 
+          <nav className="workspace-nav" aria-label="Navegação do grupo">
+            {canManagePlayers ? <button type="button" aria-controls={`${sectionPrefix}-game`} onClick={() => goTo('game')}>Jogar</button> : null}
+            <button type="button" aria-controls={`${sectionPrefix}-players`} onClick={() => goTo('players')}>Elenco</button>
+            <button type="button" aria-controls={`${sectionPrefix}-history`} onClick={() => goTo('history')}>Histórico</button>
+          </nav>
           <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status">Carregando partidas…</p>}>
-            <MatchWorkspace key={selectedGroup.id} client={client} group={selectedGroup} players={selectedPlayers} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} />
+            <MatchWorkspace key={selectedGroup.id} client={client} group={selectedGroup} players={selectedPlayers} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} />
           </Suspense></MatchModuleBoundary>
 
-          <section className="players-section">
+          <section className="players-section" id={`${sectionPrefix}-players`} tabIndex={-1} aria-label="Elenco do grupo">
             <div className="section-title-row">
               <div>
                 <p className="eyebrow">Elenco</p>
@@ -253,6 +268,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
                 <button className="solid-action small-action" type="button" disabled={formPending} onClick={() => setEditingPlayer('new')}>Adicionar</button>
               ) : null}
             </div>
+            {selectedPlayers.length ? <label className="search-field">Buscar no elenco<input type="search" placeholder="Nome ou apelido" maxLength={80} value={query} onChange={event => setPlayerSearch({ groupId: selectedGroup.id, query: event.target.value })} /></label> : null}
 
             {editingPlayer && canManagePlayers ? (
               <section className="panel compact-panel" aria-label={editingPlayer === 'new' ? 'Novo jogador' : 'Editar jogador'}>
@@ -276,7 +292,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
               </div>
             ) : (
               <ul className="player-list">
-                {selectedPlayers.map((player) => (
+                {visiblePlayers.map((player) => (
                   <li className={player.active ? 'player-card' : 'player-card inactive'} key={player.id}>
                     <div className="player-avatar" aria-hidden="true">{initials(player.nickname || player.name)}</div>
                     <div className="player-copy">
@@ -285,12 +301,13 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
                       <small>{player.is_goalkeeper ? 'Goleiro · ' : ''}Nível {Number(player.skill_rating).toFixed(1)}{player.active ? '' : ' · Inativo'}</small>
                     </div>
                     {canManagePlayers ? (
-                      <button className="quiet-action" type="button" disabled={formPending} onClick={() => setEditingPlayer(player)}>Editar</button>
+                      <button className="quiet-action" type="button" aria-label={`Editar ${player.nickname || player.name}`} disabled={formPending} onClick={() => setEditingPlayer(player)}>Editar</button>
                     ) : null}
                   </li>
                 ))}
               </ul>
             )}
+            {selectedPlayers.length > 0 && visiblePlayers.length === 0 ? <p role="status">Nenhum jogador encontrado. Tente outro nome ou apelido.</p> : null}
           </section>
         </>
       ) : null}

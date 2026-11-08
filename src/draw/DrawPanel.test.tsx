@@ -76,12 +76,12 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
     await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
     await user.click(screen.getByRole('button', { name: 'Sortear times' }))
     const result = await screen.findByRole('region', { name: 'Resultado do sorteio' })
-    const selectButtons = within(result).getAllByRole('button', { name: 'Selecionar para ajuste' })
+    const selectButtons = within(result).getAllByRole('button', { name: /^Selecionar para ajuste/ })
     await user.click(selectButtons[0]!)
     await user.click(within(result).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
     expect(within(result).getByText(/Ajustado manualmente/)).toBeInTheDocument()
     expect(within(result).getByRole('status')).toHaveTextContent('Ajuste aplicado')
-    expect(within(result).queryByRole('button', { name: 'Cancelar ajuste' })).not.toBeInTheDocument()
+    expect(within(result).queryByRole('button', { name: /^Cancelar ajuste/ })).not.toBeInTheDocument()
     expect(within(result).getAllByRole('listitem')).toHaveLength(14)
   })
 
@@ -95,7 +95,7 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
     const team = within(result).getAllByRole('article')[0]!
     const reserve = within(team).getByRole('region', { name: /Reservas do Time/ })
     const starter = within(team).getByRole('region', { name: /Em quadra do Time/ })
-    await user.click(within(reserve).getByRole('button', { name: 'Selecionar para ajuste' }))
+    await user.click(within(reserve).getByRole('button', { name: /^Selecionar para ajuste/ }))
     const outfieldStarter = within(starter).getAllByRole('listitem').find((item) => !within(item).queryByText(/Goleiro/))!
     await user.click(within(outfieldStarter).getByRole('button', { name: 'Trocar titular/reserva' }))
     expect(within(within(team).getByRole('region', { name: /Reservas do Time/ })).getAllByRole('listitem')).toHaveLength(1)
@@ -109,13 +109,13 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
     await user.click(screen.getByRole('button', { name: 'Selecionar todos' }))
     await user.click(screen.getByRole('button', { name: 'Sortear times' }))
     const result = await screen.findByRole('region', { name: 'Resultado do sorteio' })
-    await user.click(within(result).getAllByRole('button', { name: 'Selecionar para ajuste' })[0]!)
+    await user.click(within(result).getAllByRole('button', { name: /^Selecionar para ajuste/ })[0]!)
     await user.click(within(result).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
     await user.click(within(result).getByRole('button', { name: 'Novo sorteio' }))
     expect(confirm).toHaveBeenCalledOnce()
     expect(await screen.findByText(/Diferença entre médias:/)).toBeInTheDocument()
     expect(screen.queryByText(/Ajustado manualmente/)).not.toBeInTheDocument()
-    expect(within(result).queryByRole('button', { name: 'Cancelar ajuste' })).not.toBeInTheDocument()
+    expect(within(result).queryByRole('button', { name: /^Cancelar ajuste/ })).not.toBeInTheDocument()
   })
 
   it('formata a data inicial a partir dos campos locais, sem UTC', () => {

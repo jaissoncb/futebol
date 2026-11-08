@@ -20,13 +20,13 @@
 }
 
 html {
-  min-width: 320px;
+  min-width: 0;
   min-height: 100%;
   background: #f4f8f6;
 }
 
 body {
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   min-height: 100svh;
   margin: 0;
@@ -889,4 +889,56 @@ button:disabled, a[aria-disabled="true"] { cursor: not-allowed; }
   .player-card { grid-template-columns: 40px minmax(0, 1fr); }
   .player-card > button { grid-column: 2; justify-self: start; }
   .player-avatar { width: 40px; height: 40px; }
+}
+/* Fase 5A: mobile sections preserve mounted drafts and keep all actions in flow. */
+.workspace-nav { position: sticky; top: 0; z-index: 10; display: flex; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 16px; background: #f4f8f6; box-shadow: 0 4px 14px #063f3210; }
+.workspace-nav button { flex: 1; min-height: 44px; border: 0; border-radius: 11px; padding: 8px; background: white; color: var(--green-800); font-weight: 800; }
+.workspace-nav button:hover { background: var(--green-100); }
+.game-workspace, .players-section, .match-history { min-width: 0; scroll-margin-top: 80px; }
+.game-workspace { display: grid; gap: 12px; }
+.repeat-game { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; padding-inline: 4px; }
+.repeat-game small { flex-basis: 100%; color: var(--muted); line-height: 1.5; }
+.search-field { display: grid; gap: 7px; min-width: 0; font-size: .9rem; font-weight: 750; }
+.search-field input { width: 100%; min-height: 48px; padding: 10px 12px; border: 1px solid #b9c9c2; border-radius: 12px; background: white; color: var(--ink); font: inherit; font-size: 1rem; }
+.draw-player-option { padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdfc; }
+.draw-player-option.is-selected { border-color: var(--green-700); background: var(--green-100); }
+.player-full-name { display: block; margin-top: 2px; color: var(--muted); font-size: .8rem; }
+.selection-count { font-weight: 800; color: var(--green-900); }
+.draw-actions .quiet-action { padding: 10px 12px; border-radius: 10px; background: #edf5f1; }
+.draw-team { padding: 0; align-self: start; }
+.team-disclosure summary { display: grid; gap: 7px; min-height: 64px; padding: 16px; cursor: pointer; list-style: none; border-radius: 16px; background: #f5faf7; }
+.team-disclosure summary::-webkit-details-marker { display: none; }
+.team-disclosure summary h3 { margin: 0; font-size: 1.05rem; }
+.team-card-meta { color: var(--muted); font-size: .82rem; line-height: 1.45; }
+.disclosure-hint { color: var(--green-700); font-size: .78rem; font-weight: 750; }
+.team-card-body { padding: 12px 16px 16px; }
+.team-card-body > p { margin-bottom: 8px; }
+.team-card-body li { line-height: 1.55; }
+.team-card-body section + section { margin-top: 14px; }
+.player-adjustments .quiet-action { padding: 8px 10px; border-radius: 10px; background: var(--green-100); }
+.save-draw-actions { display: grid; padding-block: 8px; }
+.save-draw-actions > button { width: 100%; }
+.history-entry { gap: 5px; margin: 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8fbf9; color: var(--ink); }
+.history-entry > span { color: var(--muted); font-size: .86rem; font-weight: 500; }
+.history-entry > .history-entry-hint { color: var(--green-700); font-size: .8rem; font-weight: 750; }
+.match-history-list { display: grid; gap: 10px; }
+.whatsapp-action { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; text-decoration: none; }
+button, summary { touch-action: manipulation; }
+@media (max-width: 599px) {
+  .main-content { padding: 12px 12px 28px; }
+  .topbar { padding-inline: 12px; }
+  .workspace { gap: 12px; }
+  .group-summary { flex-wrap: wrap; padding: 16px; gap: 8px; }
+  .draw-panel, .match-history, .compact-panel { padding: 16px; border-radius: 18px; }
+  .draw-teams { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .save-draw-actions { position: sticky; bottom: 0; z-index: 5; padding: 10px 0 max(10px, env(safe-area-inset-bottom)); background: white; border-top: 1px solid var(--line); }
+  .game-flow-actions { gap: 8px; }
+  .game-flow-actions > a, .game-flow-actions > button { flex: 1 1 100%; width: 100%; }
+  .result-title > .quiet-action { padding: 8px 12px; background: #edf5f1; border-radius: 10px; }
+}
+@media (min-width: 1024px) {
+  .main-content { width: min(100%, 1040px); }
+  .topbar { width: min(100%, 1080px); }
+  .draw-teams { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .repeat-game small { flex-basis: auto; }
 }

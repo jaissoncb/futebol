@@ -22,7 +22,8 @@ Publicação e rollback: [`deployment/RELEASE.md`](deployment/RELEASE.md).
 
 ## Prévia DEV
 
-Requisitos: Node 24 (também usado pela API) e pnpm 11.19.0. Com as dependências
+Requisitos locais: Node 24.19.0 (`.nvmrc`, também usado pela API) e pnpm 11.19.0.
+O GitHub Actions permanece em Node 22 nesta fase. Com as dependências
 já instaladas, não é necessário Internet para compilar ou servir o frontend:
 
 ```powershell
@@ -56,6 +57,29 @@ Não são armazenados tokens, nomes de grupos, jogadores ou rascunhos para isso.
 Alterações de partida ainda não salvas pedem confirmação antes de trocar de grupo
 ou sair. Recarregar/fechar usa o aviso nativo do navegador. Tentativas incertas
 continuam congeladas para retry; verifique o histórico antes de abandoná-las.
+
+## Uso no celular
+
+Os atalhos Jogar, Elenco e Histórico levam o foco à seção correspondente sem
+desmontar o rascunho. A busca do elenco e dos participantes aceita nome/apelido,
+sem diferenciar acentos. Selecionar/desmarcar encontrados afeta apenas o filtro;
+os participantes selecionados fora dele continuam na partida.
+
+As equipes iniciam recolhidas em telas menores que 600 px e abertas nas demais.
+O resumo mantém quantidade, média e goleiros no sorteio. Toque ou Enter/Espaço
+abre a escalação; ajustes manuais continuam disponíveis por botões.
+
+Repetir última partida usa a primeira partida do histórico do grupo (ordem de
+data/horário vigente), configura a data de hoje e seleciona os participantes que
+continuam ativos no elenco atual. É um novo rascunho: não copia o identificador,
+não sorteia, não salva e não altera a partida anterior. Revise a seleção antes
+de sortear. Substituir um rascunho exige confirmação; uma tentativa incerta de
+salvamento bloqueia a repetição.
+
+A busca do histórico filtra somente as páginas já carregadas. Copiar,
+compartilhar e Abrir no WhatsApp usam os snapshots da escalação salva, incluindo
+titulares, reservas e goleiros. No WhatsApp ainda é necessário escolher a
+conversa e confirmar o envio. Cancelar o compartilhamento nativo não copia texto.
 
 ## Configuração e build
 

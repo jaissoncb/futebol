@@ -148,7 +148,7 @@ describe('persistência real no fluxo da Fase 7', () => {
     const user = userEvent.setup()
     render(<GameFlow client={client} group={group} players={players} />)
     const region = await result(user)
-    await user.click(within(region).getAllByRole('button', { name: 'Selecionar para ajuste' })[0]!)
+    await user.click(within(region).getAllByRole('button', { name: /^Selecionar para ajuste/ })[0]!)
     await user.click(within(region).getAllByRole('button', { name: 'Trocar com selecionado' })[0]!)
     await save(user)
     expect(saveMock.mock.calls[0]![2].assignments.filter((a) => a.assignment_source === 'manual')).toHaveLength(2)
