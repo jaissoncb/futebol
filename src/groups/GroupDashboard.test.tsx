@@ -37,6 +37,8 @@ afterEach(() => vi.restoreAllMocks())
 it('criar grupo também permite cancelar a troca e mantém a partida digitada', async () => {
   const user = userEvent.setup(), confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
   const view = render(<GroupDashboard client={client} userId="user" />)
+  // Wait for the real lazy match module before querying its form under parallel load.
+  await act(async () => { await vi.dynamicImportSettled() })
   await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Continuar aqui')
   await user.click(screen.getByRole('button', { name: 'Novo grupo' }))
   await user.type(screen.getByLabelText('Nome', { exact: true }), 'Novo destino')

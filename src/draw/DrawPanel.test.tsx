@@ -25,7 +25,9 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
   it('configura jogo, filtra elegíveis e mostra resultado 5/5/4 com aviso e goleiros', async () => {
     const user = userEvent.setup()
     render(<DrawPanel group={group} players={[...players, { ...players[0]!, id: 'inactive', active: false }, { ...players[0]!, id: 'other', group_id: 'b' }]} />)
-    await user.type(screen.getByLabelText(/Nome/), 'Futebol quinta')
+    // This scenario tests configuration and drawing, not per-character keyboard events.
+    await user.click(screen.getByLabelText(/Nome/))
+    await user.paste('Futebol quinta')
     await user.selectOptions(screen.getByLabelText('Times'), '3')
     await user.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
     expect(screen.getByText('3 times · 5 em quadra por time')).toBeInTheDocument()
