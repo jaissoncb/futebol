@@ -951,3 +951,20 @@ button, summary { touch-action: manipulation; }
   .draw-teams { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
   .repeat-game small { flex-basis: auto; }
 }
+
+.pwa-install {
+  max-width: 36rem;
+  margin-inline: auto;
+}
+
+.pwa-install summary,
+.pwa-install button {
+  min-height: 44px;
+  padding: 12px 4px;
+  color: var(--green-800);
+  font-weight: 800;
+}
+
+.pwa-install summary { cursor: pointer; }
+.pwa-install p { margin: 0 0 12px; }
+.pwa-install [role="status"]:not(:empty) { display: block; margin-block: 8px; }

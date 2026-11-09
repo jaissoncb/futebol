@@ -50,7 +50,7 @@ export default defineConfig(({ mode }) => {
         scope: '/',
         registerType: 'prompt',
         injectRegister: null,
-        includeAssets: ['icons/app-icon.svg', 'icons/app-icon-512.png'],
+        includeAssets: ['icons/app-icon.svg', 'icons/apple-touch-icon.png'],
         manifest: {
           id: '/',
           name: 'Futebol - Times equilibrados',
@@ -68,10 +68,22 @@ export default defineConfig(({ mode }) => {
               src: '/icons/app-icon.svg',
               sizes: 'any',
               type: 'image/svg+xml',
-              purpose: 'any maskable',
+              purpose: 'any',
             },
             {
-              src: '/icons/app-icon-512.png',
+              src: '/icons/app-icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any',
+            },
+            {
+              src: '/icons/app-icon-maskable-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable',
+            },
+            {
+              src: '/icons/app-icon-512-any.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',

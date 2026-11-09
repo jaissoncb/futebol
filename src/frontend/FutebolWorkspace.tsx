@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { GroupDashboard } from '../groups/GroupDashboard'
 import { PwaUpdate } from '../PwaUpdate'
+import { PwaInstall } from '../PwaInstall'
 import { ConfirmationDialog } from '../ConfirmationDialog'
 import { useConfirmation } from '../useConfirmation'
 import type { FutebolApiServices } from '../lib/api/services'
@@ -25,7 +26,7 @@ export function FutebolWorkspace({ services, internalId, onLogout, loggingOut, s
       {sessionNotice ? <p role="status">{sessionNotice}</p> : null}
       <GroupDashboard key={internalId} client={services} userId={internalId} onAttemptChange={setPending} />
     </main>
-    <footer className="footer"><a className="topbar-link" href="https://account.sabara.org/" rel="noopener noreferrer" target="_blank"
+    <footer className="footer"><PwaInstall /><a className="topbar-link" href="https://account.sabara.org/" rel="noopener noreferrer" target="_blank"
       aria-disabled={pending} onClick={event => { if (pending) event.preventDefault() }}>Gerenciar minha conta Sabará</a></footer>
   </div>
 }

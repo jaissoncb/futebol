@@ -9,6 +9,7 @@ import { ApiError } from '../lib/api/client'
 import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
 import type { FutebolFrontendConfiguration } from '../config/futebol-environment'
 import { PwaUpdate } from '../PwaUpdate'
+import { PwaInstall, PwaInstallProvider } from '../PwaInstall'
 import { FutebolWorkspace } from './FutebolWorkspace'
 import { clearSelectedGroup } from '../groups/selected-group'
 
@@ -41,11 +42,11 @@ export function FutebolRoot({ config, session, initialFailed = false }: {
   }), [session, config])
   return <KindeProvider {...config.identity} scope={KINDE_SCOPE} store={session.memory}
     useInsecureForRefreshToken={false} refreshOnFocus callbacks={callbacks}>
-    <HashRouter><Routes>
+    <PwaInstallProvider><HashRouter><Routes>
       <Route path="/" element={<FutebolHome key={sessionEpoch} config={config} session={session} failed={failed} refreshEpoch={refreshEpoch} />} />
       <Route path="/conta" element={<FutebolHome key={sessionEpoch} config={config} session={session} failed={failed} refreshEpoch={refreshEpoch} />} />
       <Route path="*" element={<Link to="/">Voltar ao Futebol</Link>} />
-    </Routes></HashRouter>
+    </Routes></HashRouter></PwaInstallProvider>
   </KindeProvider>
 }
 
@@ -184,6 +185,6 @@ function FutebolHome({ config, session, failed, refreshEpoch }: {
       {status ? <p role="status">{status}</p> : null}
       <p className="helper-text">Salve as partidas e consulte os times no histórico do seu grupo.</p>
     </section></main>
-    <footer className="footer"><a className="topbar-link" href="https://account.sabara.org/" rel="noopener noreferrer" target="_blank">Gerenciar minha conta Sabará</a></footer>
+    <footer className="footer"><PwaInstall /><a className="topbar-link" href="https://account.sabara.org/" rel="noopener noreferrer" target="_blank">Gerenciar minha conta Sabará</a></footer>
   </div>
 }
