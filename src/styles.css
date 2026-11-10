@@ -968,3 +968,15 @@ button, summary { touch-action: manipulation; }
 .pwa-install summary { cursor: pointer; }
 .pwa-install p { margin: 0 0 12px; }
 .pwa-install [role="status"]:not(:empty) { display: block; margin-block: 8px; }
+
+.draw-rules {
+  min-inline-size: 0;
+  border: 1px solid #b9c9c2;
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.draw-rules legend { font-weight: 750; }
+.draw-rules ul { display: grid; gap: 12px; margin: 0; padding-inline-start: 20px; }
+.draw-rules p { margin: 0; overflow-wrap: anywhere; }
+.draw-rules select { min-width: 0; }

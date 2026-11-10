@@ -1,3 +1,4 @@
+import { drawWithRules, type DrawRule } from './draw-rules'
 import { ALGORITHM_VERSION, drawTeams, mean, randomSource, shuffled, validate, type DrawInput, type DrawPlayer, type DrawTeam } from './engine'
 import type { PreferredPosition } from '../groups/group-service'
 
@@ -18,11 +19,25 @@ export function meanGap(means: readonly number[]) {
   return Math.max(...means) - Math.min(...means)
 }
 
+const RULE_VERSIONS = { classic: 'classic-rules-v3', balanced: 'balanced-rules-v3', competitive: 'competitive-rules-v3' } as const
+
 export function modeForVersion(version: string): DrawMode | undefined {
-  return (Object.keys(DRAW_MODES) as DrawMode[]).find(mode => DRAW_MODES[mode].version === version)
+  return (Object.keys(DRAW_MODES) as DrawMode[]).find(mode => DRAW_MODES[mode].version === version || RULE_VERSIONS[mode] === version)
 }
 
-export function drawByMode(input: SmartInput, mode: DrawMode = 'classic') {
+export function drawByMode(input: SmartInput, mode: DrawMode = 'classic', rules: readonly DrawRule[] = [], name: (id: string) => string = id => id) {
+  if (rules.length) {
+    const teams = drawWithRules(input, rules, lineup => {
+      if (mode === 'classic') return meanGap(lineup.map(mean))
+      const slots = lineup.flatMap((team, index) => team.map((player, rank) => ({
+        team: index, starter: rank < input.playersOnCourt, player,
+      })))
+      const positions = POSITIONS.filter(position =>
+        slots.filter(slot => slot.starter && !slot.player.isGoalkeeper && slot.player.preferredPosition === position).length >= 2)
+      return candidateScore(slots, lineup.map(team => team.length), input.playersOnCourt, mode, positions)
+    }, name, mode !== 'classic')
+    return { teams, balanceScore: meanGap(teams.map(team => team.skillMean)), seed: input.seed, algorithmVersion: RULE_VERSIONS[mode] }
+  }
   if (mode === 'classic') return drawTeams(input)
   validate(input)
   const random = randomSource(input.seed)

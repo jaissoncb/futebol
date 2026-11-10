@@ -1,3 +1,5 @@
+import { brokenRule, describeRule, ruleAvailable, type DrawRule } from './draw-rules'
+import { RulesEditor } from './RulesEditor'
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import type { GroupWithRole, Player } from '../groups/group-service'
 import { DrawInputError, type DrawPlayer, type DrawResult } from './engine'
@@ -26,6 +28,8 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
   const [config, setConfig] = useState<GameConfig>(initialDraft ? { ...initialDraft.config, drawMode: initialDraft.config.drawMode ?? 'classic' } : { drawMode: 'classic', name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
   const [selected, setSelected] = useState<string[]>(initialDraft?.selectedIds ?? [])
+  const [rules, setRules] = useState<DrawRule[]>([])
+  const [rulesNotice, setRulesNotice] = useState<string | null>(null)
   const [result, setResult] = useState<DrawResult | null>(null)
   const [adjustment, setAdjustment] = useState<AdjustmentState | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -51,7 +55,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   if (group.role !== 'owner' && group.role !== 'admin') return null
   const eligible = players.filter((player) => player.active && player.group_id === group.id)
   const selectedEligible = selected.filter((id) => eligible.some((p) => p.id === id))
-  const context = JSON.stringify([config, eligible.filter((p) => selected.includes(p.id)).map(toDrawPlayer).sort((a, b) => a.id.localeCompare(b.id))])
+  const context = JSON.stringify([config, rules, eligible.filter((p) => selected.includes(p.id)).map(toDrawPlayer).sort((a, b) => a.id.localeCompare(b.id))])
   const stale = result !== null && drawContext !== context
   const locked = saveState !== 'idle'
   const resultPlayers: Player[] = frozenAttempt ? frozenAttempt.payload.participants.map((p) => ({
@@ -61,15 +65,47 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   })) : eligible
 
   function invalidate() { setResult(null); setAdjustment(null); setRuns([]); setDrawContext('') }
-  function beginGame(next: GameConfig) { setDraftChanged(true); if (JSON.stringify(next) !== JSON.stringify(config)) invalidate(); setConfig(next); setError(null); setStep('participants') }
+  async function confirmDiscard() {
+    return !adjustment || !result || sameTeams(adjustment, editableResult(result, config.playersOnCourt)) ||
+      await confirm({ title: 'Descartar ajustes da escalação?', message: 'Esta alteração exige um novo sorteio e descarta os ajustes manuais.', action: 'Descartar ajustes e continuar' })
+  }
+  function pruneRules(ids: string[], teamCount: number) {
+    const available = new Set(ids)
+    const next = rules.filter(rule => ruleAvailable(rule, available, teamCount))
+    setRules(next)
+    setRulesNotice(next.length === rules.length ? null : 'Foram removidas regras de jogadores desmarcados ou times desativados.')
+  }
+  async function beginGame(next: GameConfig) {
+    if (JSON.stringify(next) !== JSON.stringify(config)) {
+      if (!await confirmDiscard()) return
+      invalidate()
+      pruneRules(selectedEligible, next.teamCount)
+    }
+    setDraftChanged(true); setConfig(next); setError(null); setStep('participants')
+  }
+  async function changeRules(next: DrawRule[]) {
+    if (drawing.current || locked || !await confirmDiscard()) return false
+    invalidate()
+    setRules(next); setRulesNotice(null); setError(null); setDraftChanged(true)
+    return true
+  }
+  async function changeParticipants(ids: string[]) {
+    if (JSON.stringify([...ids].sort()) === JSON.stringify([...selected].sort())) return
+    if (!await confirmDiscard()) return
+    invalidate()
+    pruneRules(ids, config.teamCount)
+    setSelected(ids); setError(null); setDraftChanged(true)
+  }
   function input() { return { players: eligible.filter((p) => selected.includes(p.id)).map(toDrawPlayer), playersOnCourt: config.playersOnCourt, teamCount: config.teamCount } }
   async function draw(isReroll = false) {
     if (drawing.current || locked) return
     if (isReroll && adjustment && result && !sameTeams(adjustment, editableResult(result, config.playersOnCourt)) && !await confirm({ title: 'Sortear novamente?', message: 'Um novo sorteio descartará os ajustes manuais desta escalação.', action: 'Descartar ajustes e sortear' })) return
+    if (!isReroll && !await confirmDiscard()) return
+    if (drawing.current) return
     drawing.current = true; setBusy(true); setError(null)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     try {
-      const next = drawByMode({ ...input(), seed: newSeed() }, config.drawMode)
+      const next = drawByMode({ ...input(), seed: newSeed() }, config.drawMode, rules, id => eligible.find(player => player.id === id)?.name ?? id)
       setResult(next); setAdjustment(editableResult(next, config.playersOnCourt))
       setRuns((previous) => drawContext === context ? [...previous, next] : [next]); setDrawContext(context)
       setStep('result')
@@ -100,12 +136,12 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     <ConfirmationDialog {...dialogProps} />
     <div className="game-flow-heading"><div><p className="eyebrow">Novo jogo</p><h2 ref={heading} tabIndex={-1}>{step === 'details' ? 'Configure a partida' : step === 'participants' ? 'Quem vai jogar?' : 'Times sorteados'}</h2></div><p className="game-flow-step" aria-label={`Etapa ${step === 'details' ? 1 : step === 'participants' ? 2 : 3} de 3`}>{step === 'details' ? '1 de 3' : step === 'participants' ? '2 de 3' : '3 de 3'}</p></div>
     <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'O jogo existe apenas nesta tela até você salvar e aceitar o sorteio.'}</p>
-    {step === 'details' ? <Details initial={config} onContinue={beginGame} /> : null}
-    {step === 'participants' ? <Participants busy={busy} config={config} error={error} players={eligible} selected={selectedEligible} onBack={() => { setError(null); setStep('details') }} onDraw={() => void draw()} onSelectedChange={(ids) => { if (JSON.stringify([...ids].sort()) !== JSON.stringify([...selected].sort())) invalidate(); setSelected(ids); setError(null) }} /> : null}
+    {step === 'details' ? <Details initial={config} onContinue={next => void beginGame(next)} /> : null}
+    {step === 'participants' ? <Participants busy={busy} config={config} error={error} players={eligible} selected={selectedEligible} rules={rules} rulesNotice={rulesNotice} onRulesChange={changeRules} onBack={() => { setError(null); setStep('details') }} onDraw={() => void draw()} onSelectedChange={ids => void changeParticipants(ids)} /> : null}
     {step === 'result' && stale && !locked ? <div role="status"><p>O elenco ou a configuração mudou. Faça um novo sorteio; os sorteios anteriores serão descartados.</p><button className="quiet-action" onClick={() => { invalidate(); setSelected(selectedEligible); setStep('participants') }}>Revisar participantes</button></div> : null}
     {step === 'result' && result && adjustment && (!stale || locked) ? <>
       <fieldset className="result-editing" disabled={busy || locked}><legend className="sr-only">Ajustes da escalação</legend>
-        <Results config={config} players={resultPlayers} original={result} state={adjustment} busy={busy} locked={locked} error={null} onChange={(next) => { if (!locked) setAdjustment(next) }} onReroll={() => void draw(true)} onEditGame={() => setStep('details')} onEditParticipants={() => setStep('participants')} />
+        <Results config={config} players={resultPlayers} original={result} state={adjustment} rules={rules} busy={busy} locked={locked} error={null} onChange={(next) => { if (!locked) setAdjustment(next) }} onReroll={() => void draw(true)} onEditGame={() => setStep('details')} onEditParticipants={() => setStep('participants')} />
       </fieldset>
       <p>{runs.length} sorteio(s) nesta partida. Somente o último será aceito.</p>
       {error ? <p className="form-status" role="alert">{error}</p> : null}
@@ -150,7 +186,7 @@ function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (va
   </form>
 }
 
-function Participants({ busy, config, error, players, selected, onBack, onDraw, onSelectedChange }: { busy: boolean; config: GameConfig; error: string | null; players: Player[]; selected: string[]; onBack: () => void; onDraw: () => void; onSelectedChange: (ids: string[]) => void }) {
+function Participants({ busy, config, error, players, selected, rules, rulesNotice, onRulesChange, onBack, onDraw, onSelectedChange }: { busy: boolean; config: GameConfig; error: string | null; players: Player[]; selected: string[]; rules: DrawRule[]; rulesNotice: string | null; onRulesChange: (rules: DrawRule[]) => Promise<boolean>; onBack: () => void; onDraw: () => void; onSelectedChange: (ids: string[]) => void }) {
   const [query, setQuery] = useState('')
   const visible = searchPlayers(players, query)
   const visibleIds = new Set(visible.map(p => p.id))
@@ -171,13 +207,15 @@ function Participants({ busy, config, error, players, selected, onBack, onDraw, 
     {!visible.length ? <p role="status">Nenhum jogador encontrado. Tente outro nome ou apelido.</p> : null}
     <p className="selection-count" aria-live="polite">{selected.length} jogadores selecionados{filtering ? ` · ${visible.length} encontrados` : ''}</p>
     {filtering && selected.some(id => !visibleIds.has(id)) ? <p className="game-flow-note">A busca não remove os jogadores já selecionados fora deste filtro.</p> : null}
+    {rulesNotice && <p role="status">{rulesNotice}</p>}
+    <RulesEditor rules={rules} players={players.filter(player => selected.includes(player.id))} teamCount={config.teamCount} busy={busy} onChange={onRulesChange} />
     <p className="game-flow-note">Mínimo de {config.teamCount} participantes. Todos entram em um time; times incompletos e reservas são permitidos.</p>
     {error ? <p className="form-status" role="alert">{error}</p> : null}
     <div className="game-flow-actions"><button className="quiet-action" type="button" disabled={busy} onClick={onBack}>Voltar</button><button className="solid-action" type="button" disabled={busy || selected.length < config.teamCount} onClick={onDraw}>{busy ? 'Sorteando…' : 'Sortear times'}</button></div>
   </div>
 }
 
-function Results({ config, players, original, state, busy, locked, error, onChange, onReroll, onEditGame, onEditParticipants }: { config: GameConfig; players: Player[]; original: DrawResult; state: AdjustmentState; busy: boolean; locked: boolean; error: string | null; onChange: (state: AdjustmentState) => void; onReroll: () => void; onEditGame: () => void; onEditParticipants: () => void }) {
+function Results({ config, players, original, state, rules, busy, locked, error, onChange, onReroll, onEditGame, onEditParticipants }: { config: GameConfig; players: Player[]; original: DrawResult; state: AdjustmentState; rules: DrawRule[]; busy: boolean; locked: boolean; error: string | null; onChange: (state: AdjustmentState) => void; onReroll: () => void; onEditGame: () => void; onEditParticipants: () => void }) {
   const [selected, setSelected] = useState<SelectedPlayer>(null)
   const [dragging, setDragging] = useState<SelectedPlayer>(null)
   const [notice, setNotice] = useState<{ seed: string; message: string } | null>(null)
@@ -189,10 +227,31 @@ function Results({ config, players, original, state, busy, locked, error, onChan
   const starterGap = meanGap(metrics.map(team => team.starterMean))
   const resultHeading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { resultHeading.current?.focus() }, [original.seed])
-  function apply(action: ReturnType<typeof movePlayer>) { if (busy || locked) return; if (action.ok) { onChange(action.state); setSelected(null); setDragging(null); setNotice({ seed: original.seed, message: 'Ajuste aplicado. As métricas foram atualizadas.' }); resultHeading.current?.focus(); return } setNotice({ seed: original.seed, message: action.message }) }
+  const name = (id: string) => players.find(player => player.id === id)?.name ?? id
+  function apply(action: ReturnType<typeof movePlayer>) {
+    if (busy || locked) return
+    if (!action.ok) {
+      setNotice({ seed: original.seed, message: action.message })
+      return
+    }
+    const violation = brokenRule(rules, action.state.teams)
+    if (violation) {
+      setNotice({ seed: original.seed, message: 'O ajuste viola a regra ' + describeRule(violation, name, TEAM_NAMES) + '. Volte aos participantes para revisar ou remover a regra.' })
+      return
+    }
+    if (rules.length && config.drawMode !== 'classic') {
+      const keeperCounts = action.state.teams.map(team => team.playerIds.filter(id => drawPlayers.get(id)?.isGoalkeeper).length)
+      if (meanGap(keeperCounts) > 1) {
+        setNotice({ seed: original.seed, message: 'O ajuste deixaria a distribuição de goleiros desigual entre os times.' })
+        return
+      }
+    }
+    onChange(action.state); setSelected(null); setDragging(null)
+    setNotice({ seed: original.seed, message: 'Ajuste aplicado. As métricas foram atualizadas.' }); resultHeading.current?.focus()
+  }
   function dropOnTeam(event: DragEvent<HTMLElement>, teamIndex: number) { event.preventDefault(); if (dragging) apply(movePlayer(state, dragging.teamIndex, dragging.id, teamIndex, drawPlayers)); setDragging(null) }
   function dropOnPlayer(event: DragEvent<HTMLElement>, teamIndex: number, playerId: string) { event.preventDefault(); event.stopPropagation(); if (dragging && (dragging.teamIndex !== teamIndex || dragging.id !== playerId)) apply(swapPlayers(state, dragging.teamIndex, dragging.id, teamIndex, playerId, drawPlayers)); setDragging(null) }
-  return <section aria-label="Resultado do sorteio" aria-live="polite" className="draw-result"><div className="result-title"><div><h3 ref={resultHeading} tabIndex={-1}>{config.name.trim() || 'Jogo sem nome'}</h3><p>{formatDate(config.matchDate)}{config.matchTime ? ` · ${config.matchTime}` : ''} · {config.teamCount} times</p></div><button className="quiet-action" type="button" disabled={busy} onClick={() => { setSelected(null); setDragging(null); onReroll() }}>{busy ? 'Sorteando…' : 'Novo sorteio'}</button></div><p><strong>{mode.label}</strong> · {mode.description}</p><p>{adjusted ? 'Ajustado manualmente · ' : ''}Diferença entre médias gerais: {rosterGap.toFixed(2)} · Diferença entre médias dos titulares: {starterGap.toFixed(2)}.</p><p className="game-flow-note">Arraste um jogador sobre outro para trocar os times. No celular ou com teclado, selecione um jogador e use os botões de troca ou de titulares/reservas.</p>{notice?.seed === original.seed ? <p className="adjustment-status" role="status">{notice.message}</p> : null}{error ? <p className="form-status" role="alert">{error}</p> : null}<div className="draw-teams">{state.teams.map((team, index) => <Team key={TEAM_NAMES[index]} team={team} metrics={metrics[index]!} index={index} players={players} selected={selected} onSelect={setSelected} onDrag={setDragging} onDropTeam={dropOnTeam} onDropPlayer={dropOnPlayer} onApply={apply} state={state} drawPlayers={drawPlayers} />)}</div><p className="game-flow-note">Confira a escalação final antes de salvar e aceitar.</p><div className="game-flow-actions"><button className="quiet-action" type="button" onClick={onEditGame}>Editar jogo</button><button className="solid-action" type="button" onClick={onEditParticipants}>Voltar aos participantes</button></div></section>
+  return <section aria-label="Resultado do sorteio" aria-live="polite" className="draw-result"><div className="result-title"><div><h3 ref={resultHeading} tabIndex={-1}>{config.name.trim() || 'Jogo sem nome'}</h3><p>{formatDate(config.matchDate)}{config.matchTime ? ` · ${config.matchTime}` : ''} · {config.teamCount} times</p></div><button className="quiet-action" type="button" disabled={busy} onClick={() => { setSelected(null); setDragging(null); onReroll() }}>{busy ? 'Sorteando…' : 'Novo sorteio'}</button></div><p><strong>{mode.label}</strong> · {mode.description}</p>{rules.length > 0 && <p>{rules.length} regra(s) ativa(s). Você pode revisá-las na etapa de participantes.</p>}<p>{adjusted ? 'Ajustado manualmente · ' : ''}Diferença entre médias gerais: {rosterGap.toFixed(2)} · Diferença entre médias dos titulares: {starterGap.toFixed(2)}.</p><p className="game-flow-note">Arraste um jogador sobre outro para trocar os times. No celular ou com teclado, selecione um jogador e use os botões de troca ou de titulares/reservas.</p>{notice?.seed === original.seed ? <p className="adjustment-status" role="status">{notice.message}</p> : null}{error ? <p className="form-status" role="alert">{error}</p> : null}<div className="draw-teams">{state.teams.map((team, index) => <Team key={TEAM_NAMES[index]} team={team} metrics={metrics[index]!} index={index} players={players} selected={selected} onSelect={setSelected} onDrag={setDragging} onDropTeam={dropOnTeam} onDropPlayer={dropOnPlayer} onApply={apply} state={state} drawPlayers={drawPlayers} />)}</div><p className="game-flow-note">Confira a escalação final antes de salvar e aceitar.</p><div className="game-flow-actions"><button className="quiet-action" type="button" onClick={onEditGame}>Editar jogo</button><button className="solid-action" type="button" onClick={onEditParticipants}>Voltar aos participantes</button></div></section>
 }
 
 function Team({ team, metrics, index, players, selected, onSelect, onDrag, onDropTeam, onDropPlayer, onApply, state, drawPlayers }: { team: AdjustmentState['teams'][number]; metrics: ReturnType<typeof teamMetrics>; index: number; players: Player[]; selected: SelectedPlayer; onSelect: (value: SelectedPlayer) => void; onDrag: (value: SelectedPlayer) => void; onDropTeam: (event: DragEvent<HTMLElement>, index: number) => void; onDropPlayer: (event: DragEvent<HTMLElement>, index: number, id: string) => void; onApply: (result: ReturnType<typeof movePlayer>) => void; state: AdjustmentState; drawPlayers: Map<string, DrawPlayer> }) {
