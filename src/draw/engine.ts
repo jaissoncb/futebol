@@ -23,7 +23,7 @@ export const DRAW_TUNING = Object.freeze({ candidates: 400, shortlist: 10, skill
 export class DrawInputError extends Error {}
 
 /** Four-word seeded PRNG; production supplies a fresh 128-bit Web Crypto seed. */
-function randomSource(seed: string): () => number {
+export function randomSource(seed: string): () => number {
   const state: [number, number, number, number] = [0x9e3779b9, 0x243f6a88, 0xb7e15162, 0xdeadbeef]
   for (let i = 0; i < seed.length; i++) {
     const lane = i % 4
@@ -41,7 +41,7 @@ function randomSource(seed: string): () => number {
   for (let i = 0; i < 20; i++) next()
   return next
 }
-function shuffled<T>(values: readonly T[], random: () => number): T[] {
+export function shuffled<T>(values: readonly T[], random: () => number): T[] {
   const result = [...values]
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1))
@@ -49,7 +49,7 @@ function shuffled<T>(values: readonly T[], random: () => number): T[] {
   }
   return result
 }
-function validate(input: DrawInput) {
+export function validate(input: DrawInput) {
   if (!input || !Array.isArray(input.players)) throw new DrawInputError('Informe os jogadores selecionados.')
   if (input.teamCount !== 2 && input.teamCount !== 3) throw new DrawInputError('Escolha 2 ou 3 times.')
   if (!Number.isInteger(input.playersOnCourt) || input.playersOnCourt < 1 || input.playersOnCourt > 20) {
@@ -69,7 +69,7 @@ function validate(input: DrawInput) {
     ids.add(player.id)
   }
 }
-function mean(players: readonly DrawPlayer[]): number {
+export function mean(players: readonly DrawPlayer[]): number {
   return players.reduce((total, player) => total + player.skillRating, 0) / players.length
 }
 function score(teams: readonly DrawPlayer[][]): number {
@@ -123,4 +123,4 @@ export function drawTeams(input: DrawInput) {
   })
   return { teams, balanceScore: selected.score, seed: input.seed, algorithmVersion: ALGORITHM_VERSION }
 }
-export type DrawResult = ReturnType<typeof drawTeams>
+export type DrawResult = Omit<ReturnType<typeof drawTeams>, 'algorithmVersion'> & { algorithmVersion: string }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import type { GroupWithRole, Player } from '../groups/group-service'
-import { drawTeams, DrawInputError, type DrawPlayer, type DrawResult } from './engine'
+import { DrawInputError, type DrawPlayer, type DrawResult } from './engine'
+import { DRAW_MODES, drawByMode, meanGap, modeForVersion, type DrawMode } from './smart-engine'
 import { movePlayer, swapCourtStatus, swapPlayers, type AdjustmentState } from './adjustments'
 import { localDateInputValue } from './local-date'
 import type { FutebolDataClient } from '../lib/data-client'
@@ -23,7 +24,7 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
 export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft }) {
   const { confirm, dialogProps } = useConfirmation()
   const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
-  const [config, setConfig] = useState<GameConfig>(initialDraft?.config ?? { name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
+  const [config, setConfig] = useState<GameConfig>(initialDraft ? { ...initialDraft.config, drawMode: initialDraft.config.drawMode ?? 'classic' } : { drawMode: 'classic', name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
   const [selected, setSelected] = useState<string[]>(initialDraft?.selectedIds ?? [])
   const [result, setResult] = useState<DrawResult | null>(null)
   const [adjustment, setAdjustment] = useState<AdjustmentState | null>(null)
@@ -68,7 +69,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     drawing.current = true; setBusy(true); setError(null)
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     try {
-      const next = drawTeams({ ...input(), seed: newSeed() })
+      const next = drawByMode({ ...input(), seed: newSeed() }, config.drawMode)
       setResult(next); setAdjustment(editableResult(next, config.playersOnCourt))
       setRuns((previous) => drawContext === context ? [...previous, next] : [next]); setDrawContext(context)
       setStep('result')
@@ -116,8 +117,37 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
 }
 
 function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (value: GameConfig) => void }) {
-  function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = new FormData(event.currentTarget); onContinue({ name: stringValue(form, 'name'), matchDate: stringValue(form, 'matchDate'), matchTime: stringValue(form, 'matchTime'), playersOnCourt: Number(form.get('playersOnCourt')), teamCount: Number(form.get('teamCount')) }) }
-  return <form className="data-form" onSubmit={submit}><label><span className="field-label">Nome <span>(opcional)</span></span><input name="name" defaultValue={initial.name} minLength={2} maxLength={80} placeholder="Ex.: Futebol de quinta" /></label><div className="form-grid"><label>Data<input name="matchDate" type="date" defaultValue={initial.matchDate} required /></label><label><span className="field-label">Horário <span>(opcional)</span></span><input name="matchTime" type="time" defaultValue={initial.matchTime} /></label></div><div className="form-grid"><label>Times<select aria-label="Times" name="teamCount" defaultValue={initial.teamCount}><option value={2}>2 times</option><option value={3}>3 times</option></select></label><label>Em quadra por time<input name="playersOnCourt" type="number" min="1" max="20" defaultValue={initial.playersOnCourt} required /></label></div><button className="solid-action" type="submit">Selecionar participantes</button></form>
+  const [mode, setMode] = useState<DrawMode>(initial.drawMode ?? 'classic')
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    onContinue({
+      name: stringValue(form, 'name'),
+      matchDate: stringValue(form, 'matchDate'),
+      matchTime: stringValue(form, 'matchTime'),
+      playersOnCourt: Number(form.get('playersOnCourt')),
+      teamCount: Number(form.get('teamCount')),
+      drawMode: mode,
+    })
+  }
+  return <form className="data-form" onSubmit={submit}>
+    <label><span className="field-label">Nome <span>(opcional)</span></span><input name="name" defaultValue={initial.name} minLength={2} maxLength={80} placeholder="Ex.: Futebol de quinta" /></label>
+    <div className="form-grid">
+      <label>Data<input name="matchDate" type="date" defaultValue={initial.matchDate} required /></label>
+      <label><span className="field-label">Horário <span>(opcional)</span></span><input name="matchTime" type="time" defaultValue={initial.matchTime} /></label>
+    </div>
+    <div className="form-grid">
+      <label>Times<select aria-label="Times" name="teamCount" defaultValue={initial.teamCount}><option value={2}>2 times</option><option value={3}>3 times</option></select></label>
+      <label>Em quadra por time<input name="playersOnCourt" type="number" min="1" max="20" defaultValue={initial.playersOnCourt} required /></label>
+    </div>
+    <label>Modo de sorteio
+      <select value={mode} aria-describedby="draw-mode-description" onChange={event => setMode(event.target.value as DrawMode)}>
+        {Object.entries(DRAW_MODES).map(([value, option]) => <option key={value} value={value}>{option.label}</option>)}
+      </select>
+    </label>
+    <p id="draw-mode-description" className="game-flow-note">{DRAW_MODES[mode].description}</p>
+    <button className="solid-action" type="submit">Selecionar participantes</button>
+  </form>
 }
 
 function Participants({ busy, config, error, players, selected, onBack, onDraw, onSelectedChange }: { busy: boolean; config: GameConfig; error: string | null; players: Player[]; selected: string[]; onBack: () => void; onDraw: () => void; onSelectedChange: (ids: string[]) => void }) {
@@ -128,7 +158,7 @@ function Participants({ busy, config, error, players, selected, onBack, onDraw, 
   if (players.length === 0) return <div className="empty-list"><p>Nenhum jogador ativo disponível.</p><span>Cadastre ou reative jogadores no elenco antes de criar o jogo.</span><button className="quiet-action" type="button" onClick={onBack}>Voltar à configuração</button></div>
   const toggle = (id: string, checked: boolean) => onSelectedChange(checked ? [...selected, id] : selected.filter((entry) => entry !== id))
   return <div className="game-participants">
-    <p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time</p>
+    <p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time · {DRAW_MODES[config.drawMode ?? 'classic'].label}</p>
     <label className="search-field">Buscar participantes<input type="search" value={query} maxLength={80} placeholder="Nome ou apelido" disabled={busy} onChange={event => { event.stopPropagation(); setQuery(event.target.value) }} /></label>
     <div className="draw-actions">
       <button className="quiet-action" type="button" disabled={busy || !visible.length} onClick={() => onSelectedChange([...new Set([...selected, ...visible.map(p => p.id)])])}>{filtering ? `Selecionar encontrados (${visible.length})` : 'Selecionar todos'}</button>
@@ -150,23 +180,26 @@ function Participants({ busy, config, error, players, selected, onBack, onDraw, 
 function Results({ config, players, original, state, busy, locked, error, onChange, onReroll, onEditGame, onEditParticipants }: { config: GameConfig; players: Player[]; original: DrawResult; state: AdjustmentState; busy: boolean; locked: boolean; error: string | null; onChange: (state: AdjustmentState) => void; onReroll: () => void; onEditGame: () => void; onEditParticipants: () => void }) {
   const [selected, setSelected] = useState<SelectedPlayer>(null)
   const [dragging, setDragging] = useState<SelectedPlayer>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<{ seed: string; message: string } | null>(null)
   const drawPlayers = new Map(players.map((player) => [player.id, toDrawPlayer(player)]))
   const adjusted = !sameTeams(state, editableResult(original, config.playersOnCourt))
-  const currentScore = balanceScore(state, drawPlayers)
+  const mode = DRAW_MODES[modeForVersion(original.algorithmVersion) ?? 'classic']
+  const metrics = state.teams.map(team => teamMetrics(team, drawPlayers))
+  const rosterGap = meanGap(metrics.map(team => team.rosterMean))
+  const starterGap = meanGap(metrics.map(team => team.starterMean))
   const resultHeading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { resultHeading.current?.focus() }, [original.seed])
-  function apply(action: ReturnType<typeof movePlayer>) { if (busy || locked) return; if (action.ok) { onChange(action.state); setSelected(null); setDragging(null); setNotice('Ajuste aplicado. As métricas foram atualizadas.'); resultHeading.current?.focus(); return } setNotice(action.message) }
+  function apply(action: ReturnType<typeof movePlayer>) { if (busy || locked) return; if (action.ok) { onChange(action.state); setSelected(null); setDragging(null); setNotice({ seed: original.seed, message: 'Ajuste aplicado. As métricas foram atualizadas.' }); resultHeading.current?.focus(); return } setNotice({ seed: original.seed, message: action.message }) }
   function dropOnTeam(event: DragEvent<HTMLElement>, teamIndex: number) { event.preventDefault(); if (dragging) apply(movePlayer(state, dragging.teamIndex, dragging.id, teamIndex, drawPlayers)); setDragging(null) }
   function dropOnPlayer(event: DragEvent<HTMLElement>, teamIndex: number, playerId: string) { event.preventDefault(); event.stopPropagation(); if (dragging && (dragging.teamIndex !== teamIndex || dragging.id !== playerId)) apply(swapPlayers(state, dragging.teamIndex, dragging.id, teamIndex, playerId, drawPlayers)); setDragging(null) }
-  return <section aria-label="Resultado do sorteio" aria-live="polite" className="draw-result"><div className="result-title"><div><h3 ref={resultHeading} tabIndex={-1}>{config.name.trim() || 'Jogo sem nome'}</h3><p>{formatDate(config.matchDate)}{config.matchTime ? ` · ${config.matchTime}` : ''} · {config.teamCount} times</p></div><button className="quiet-action" type="button" disabled={busy} onClick={() => { setSelected(null); setDragging(null); onReroll() }}>{busy ? 'Sorteando…' : 'Novo sorteio'}</button></div><p>{adjusted ? `Ajustado manualmente · diferença atual entre médias: ${currentScore.toFixed(2)}. Não houve reotimização automática.` : `Diferença entre médias: ${original.balanceScore.toFixed(2)}. Quanto menor, mais próximos os níveis médios.`}</p><p className="game-flow-note">Arraste um jogador sobre outro para trocar os times. No celular ou com teclado, selecione um jogador e use os botões de troca ou de titulares/reservas.</p>{notice ? <p className="adjustment-status" role="status">{notice}</p> : null}{error ? <p className="form-status" role="alert">{error}</p> : null}<div className="draw-teams">{state.teams.map((team, index) => <Team key={TEAM_NAMES[index]} team={team} index={index} players={players} selected={selected} onSelect={setSelected} onDrag={setDragging} onDropTeam={dropOnTeam} onDropPlayer={dropOnPlayer} onApply={apply} state={state} drawPlayers={drawPlayers} />)}</div><p className="game-flow-note">Confira a escalação final antes de salvar e aceitar.</p><div className="game-flow-actions"><button className="quiet-action" type="button" onClick={onEditGame}>Editar jogo</button><button className="solid-action" type="button" onClick={onEditParticipants}>Voltar aos participantes</button></div></section>
+  return <section aria-label="Resultado do sorteio" aria-live="polite" className="draw-result"><div className="result-title"><div><h3 ref={resultHeading} tabIndex={-1}>{config.name.trim() || 'Jogo sem nome'}</h3><p>{formatDate(config.matchDate)}{config.matchTime ? ` · ${config.matchTime}` : ''} · {config.teamCount} times</p></div><button className="quiet-action" type="button" disabled={busy} onClick={() => { setSelected(null); setDragging(null); onReroll() }}>{busy ? 'Sorteando…' : 'Novo sorteio'}</button></div><p><strong>{mode.label}</strong> · {mode.description}</p><p>{adjusted ? 'Ajustado manualmente · ' : ''}Diferença entre médias gerais: {rosterGap.toFixed(2)} · Diferença entre médias dos titulares: {starterGap.toFixed(2)}.</p><p className="game-flow-note">Arraste um jogador sobre outro para trocar os times. No celular ou com teclado, selecione um jogador e use os botões de troca ou de titulares/reservas.</p>{notice?.seed === original.seed ? <p className="adjustment-status" role="status">{notice.message}</p> : null}{error ? <p className="form-status" role="alert">{error}</p> : null}<div className="draw-teams">{state.teams.map((team, index) => <Team key={TEAM_NAMES[index]} team={team} metrics={metrics[index]!} index={index} players={players} selected={selected} onSelect={setSelected} onDrag={setDragging} onDropTeam={dropOnTeam} onDropPlayer={dropOnPlayer} onApply={apply} state={state} drawPlayers={drawPlayers} />)}</div><p className="game-flow-note">Confira a escalação final antes de salvar e aceitar.</p><div className="game-flow-actions"><button className="quiet-action" type="button" onClick={onEditGame}>Editar jogo</button><button className="solid-action" type="button" onClick={onEditParticipants}>Voltar aos participantes</button></div></section>
 }
 
-function Team({ team, index, players, selected, onSelect, onDrag, onDropTeam, onDropPlayer, onApply, state, drawPlayers }: { team: AdjustmentState['teams'][number]; index: number; players: Player[]; selected: SelectedPlayer; onSelect: (value: SelectedPlayer) => void; onDrag: (value: SelectedPlayer) => void; onDropTeam: (event: DragEvent<HTMLElement>, index: number) => void; onDropPlayer: (event: DragEvent<HTMLElement>, index: number, id: string) => void; onApply: (result: ReturnType<typeof movePlayer>) => void; state: AdjustmentState; drawPlayers: Map<string, DrawPlayer> }) {
-  const court = team.playerIds.filter((id) => !team.reserveIds.includes(id)); const reserves = team.reserveIds
-  const goalkeeperCount = team.playerIds.filter((id) => drawPlayers.get(id)?.isGoalkeeper).length
-  const sum = team.playerIds.reduce((total, id) => total + (drawPlayers.get(id)?.skillRating ?? 0), 0); const missing = Math.max(0, state.playersOnCourt - team.playerIds.length)
-  return <TeamCard name={`Time ${TEAM_NAMES[index]}`} summary={`${team.playerIds.length} jogadores · Média ${team.playerIds.length ? (sum / team.playerIds.length).toFixed(2) : '0.00'} · ${goalkeeperCount} goleiro(s)`} onDragOver={event => event.preventDefault()} onDrop={event => onDropTeam(event, index)}>{selected && selected.teamIndex !== index ? <button className="quiet-action" type="button" onClick={() => onApply(movePlayer(state, selected.teamIndex, selected.id, index, drawPlayers))}>Mover selecionado para este time</button> : null}<p className="game-flow-note">Soma dos níveis: {sum.toFixed(1)}</p>{goalkeeperCount === 0 ? <p className="team-warning">Sem goleiro disponível neste time.</p> : null}{missing > 0 ? <p className="team-warning">{team.playerIds.length}/{state.playersOnCourt} em quadra — precisa de {missing} jogador(es) emprestado(s)</p> : null}<Roster title="Em quadra" ids={court} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /><Roster title="Reservas" ids={reserves} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /></TeamCard>
+function Team({ team, metrics, index, players, selected, onSelect, onDrag, onDropTeam, onDropPlayer, onApply, state, drawPlayers }: { team: AdjustmentState['teams'][number]; metrics: ReturnType<typeof teamMetrics>; index: number; players: Player[]; selected: SelectedPlayer; onSelect: (value: SelectedPlayer) => void; onDrag: (value: SelectedPlayer) => void; onDropTeam: (event: DragEvent<HTMLElement>, index: number) => void; onDropPlayer: (event: DragEvent<HTMLElement>, index: number, id: string) => void; onApply: (result: ReturnType<typeof movePlayer>) => void; state: AdjustmentState; drawPlayers: Map<string, DrawPlayer> }) {
+  const { court, rosterMean, starterMean, goalkeeperCount, sum } = metrics
+  const reserves = team.reserveIds
+  const missing = Math.max(0, state.playersOnCourt - team.playerIds.length)
+  return <TeamCard name={`Time ${TEAM_NAMES[index]}`} summary={`${team.playerIds.length} jogadores · Média geral ${rosterMean.toFixed(2)} · Média dos titulares ${starterMean.toFixed(2)} · ${goalkeeperCount} goleiro(s) · ${reserves.length} reserva(s)`} onDragOver={event => event.preventDefault()} onDrop={event => onDropTeam(event, index)}>{selected && selected.teamIndex !== index ? <button className="quiet-action" type="button" onClick={() => onApply(movePlayer(state, selected.teamIndex, selected.id, index, drawPlayers))}>Mover selecionado para este time</button> : null}<p className="game-flow-note">Soma dos níveis: {sum.toFixed(1)}</p>{goalkeeperCount === 0 ? <p className="team-warning">Sem goleiro disponível neste time.</p> : null}{missing > 0 ? <p className="team-warning">{team.playerIds.length}/{state.playersOnCourt} em quadra — precisa de {missing} jogador(es) emprestado(s)</p> : null}<Roster title="Em quadra" ids={court} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /><Roster title="Reservas" ids={reserves} teamIndex={index} players={players} selected={selected} onSelect={onSelect} onDrag={onDrag} onDropPlayer={onDropPlayer} onApply={onApply} state={state} drawPlayers={drawPlayers} /></TeamCard>
 }
 
 function Roster({ title, ids, teamIndex, players, selected, onSelect, onDrag, onDropPlayer, onApply, state, drawPlayers }: { title: string; ids: string[]; teamIndex: number; players: Player[]; selected: SelectedPlayer; onSelect: (value: SelectedPlayer) => void; onDrag: (value: SelectedPlayer) => void; onDropPlayer: (event: DragEvent<HTMLElement>, index: number, id: string) => void; onApply: (result: ReturnType<typeof movePlayer>) => void; state: AdjustmentState; drawPlayers: Map<string, DrawPlayer> }) {
@@ -175,8 +208,19 @@ function Roster({ title, ids, teamIndex, players, selected, onSelect, onDrag, on
 
 function stringValue(form: FormData, name: string): string { const value = form.get(name); return typeof value === 'string' ? value : '' }
 function formatDate(value: string): string { if (!value) return 'Data não informada'; const [year, month, day] = value.split('-'); return `${day}/${month}/${year}` }
-function toDrawPlayer(player: Player): DrawPlayer { return { id: player.id, skillRating: Number(player.skill_rating), isGoalkeeper: player.is_goalkeeper } }
+function toDrawPlayer(player: Player) { return { id: player.id, skillRating: Number(player.skill_rating), isGoalkeeper: player.is_goalkeeper, preferredPosition: player.preferred_position } }
 function playerName(player: Player) { return player.nickname || player.name }
 function newSeed() { return Array.from(crypto.getRandomValues(new Uint32Array(4)), (word) => word.toString(16).padStart(8, '0')).join('') }
 function sameTeams(first: AdjustmentState, second: AdjustmentState) { return JSON.stringify(first.teams) === JSON.stringify(second.teams) }
-function balanceScore(state: AdjustmentState, players: ReadonlyMap<string, DrawPlayer>) { const means = state.teams.map((team) => team.playerIds.reduce((sum, id) => sum + (players.get(id)?.skillRating ?? 0), 0) / team.playerIds.length); return Math.max(...means) - Math.min(...means) }
+function teamMetrics(team: AdjustmentState['teams'][number], players: ReadonlyMap<string, DrawPlayer>) {
+  const reserves = new Set(team.reserveIds)
+  const court = team.playerIds.filter(id => !reserves.has(id))
+  const skillSum = (ids: readonly string[]) => ids.reduce((sum, id) => sum + (players.get(id)?.skillRating ?? 0), 0)
+  const sum = skillSum(team.playerIds)
+  return {
+    court, sum,
+    rosterMean: sum / team.playerIds.length,
+    starterMean: skillSum(court) / court.length,
+    goalkeeperCount: team.playerIds.filter(id => players.get(id)?.isGoalkeeper).length,
+  }
+}

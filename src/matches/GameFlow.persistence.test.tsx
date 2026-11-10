@@ -83,6 +83,51 @@ describe('persistência real no fluxo da Fase 7', () => {
     expect(uuid).toHaveBeenCalledOnce()
     expect(saveMock.mock.calls[1]![1]).toBe(first[1]); expect(saveMock.mock.calls[1]![2]).toBe(first[2])
   })
+  it.each([
+    ['balanced', 'Equilibrado', 'balanced-positions-v2'],
+    ['competitive', 'Competitivo', 'competitive-starters-v2'],
+  ])('salva %s com seed, métricas históricas e retry idempotente após ajustes e novo sorteio', async (mode, label, version) => {
+    const user = userEvent.setup()
+    saveMock.mockRejectedValueOnce(new Error('timeout'))
+    render(<GameFlow client={client} group={group} players={players} />)
+    const select = screen.getByRole('combobox', { name: 'Modo de sorteio' })
+    expect(select).toHaveValue('classic')
+    await user.selectOptions(select, mode)
+    const region = await result(user)
+    expect(within(region).getByText(label, { exact: true })).toBeInTheDocument()
+    expect(within(region).getByText(/Diferença entre médias dos titulares/)).toBeInTheDocument()
+    const team = within(region).getAllByRole('article')[0]!
+    const reserve = within(team).getByRole('region', { name: /Reservas do Time/ })
+    const starter = within(team).getByRole('region', { name: /Em quadra do Time/ })
+    const swap = async () => {
+      await user.click(within(reserve).getByRole('button', { name: /^Selecionar para ajuste/ }))
+      await user.click(within(starter).getByRole('button', { name: 'Trocar titular/reserva' }))
+    }
+    await swap()
+    expect(within(region).getByText(/Ajustado manualmente/)).toBeInTheDocument()
+    await user.click(within(region).getByRole('button', { name: 'Novo sorteio' }))
+    await user.click(screen.getByRole('button', { name: 'Descartar ajustes e sortear' }))
+    await screen.findByText('2 sorteio(s) nesta partida. Somente o último será aceito.')
+    expect(within(region).queryByText(/Ajuste aplicado/)).not.toBeInTheDocument()
+    await swap()
+    await user.click(screen.getByRole('button', { name: 'Salvar e aceitar sorteio' }))
+    await screen.findByRole('alert')
+    const [, id, payload] = saveMock.mock.calls[0]!
+    expect(payload.draw_runs.map(run => [run.algorithm_version, run.accepted])).toEqual([[version, false], [version, true]])
+    expect(new Set(payload.draw_runs.map(run => run.seed)).size).toBe(2)
+    const means = payload.teams.map(({ team_index }) => {
+      const ids = payload.assignments.filter(assignment => assignment.team_index === team_index).map(assignment => assignment.player_id)
+      return payload.participants.filter(player => ids.includes(player.player_id)).reduce((sum, player) => sum + player.skill_rating_snapshot, 0) / ids.length
+    })
+    expect(payload.draw_runs[1]!.balance_score).toBeCloseTo(Math.abs(means[0]! - means[1]!), 12)
+    expect(payload.participants).toHaveLength(players.length)
+    expect(payload.assignments.filter(assignment => assignment.assignment_source === 'manual')).toHaveLength(2)
+    await user.click(screen.getByRole('button', { name: 'Tentar salvar novamente' }))
+    await screen.findByText(/Partida salva e sorteio aceito/)
+    expect(saveMock.mock.calls[1]![1]).toBe(id)
+    expect(saveMock.mock.calls[1]![2]).toBe(payload)
+  })
+
   it('exige abandono explícito antes de editar conteúdo divergente e usa outro UUID', async () => {
     const user = userEvent.setup()
     saveMock.mockRejectedValueOnce(new Error('timeout'))

@@ -1,8 +1,9 @@
 import type { Player } from '../groups/group-service'
 import type { DrawResult } from '../draw/engine'
+import type { DrawMode } from '../draw/smart-engine'
 import type { AdjustmentState } from '../draw/adjustments'
 
-export type GameConfig = { name: string; matchDate: string; matchTime: string; playersOnCourt: number; teamCount: number }
+export type GameConfig = { name: string; matchDate: string; matchTime: string; playersOnCourt: number; teamCount: number; drawMode?: DrawMode }
 export const TEAM_NAMES = ['Azul', 'Vermelho', 'Verde']
 const TEAM_COLORS = ['blue', 'red', 'green']
 
