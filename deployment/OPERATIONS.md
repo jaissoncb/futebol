@@ -129,3 +129,29 @@ segurança/workflow/artefato aprovados, além de typecheck, lint afetado e check
 release. Contratos de linhas/enums e arquivos preexistentes conferidos sem
 alteração; lockfile perdeu somente dependências exclusivas do Supabase.
 Não houve build DEV, teste remoto de escrita, migration ou deploy nesta rodada.
+
+## Contas de homologação — Kinde Test (DEV)
+
+Informação fornecida e autorizada pelo proprietário do projeto em 10/11/2026.
+Estas contas são destinadas exclusivamente aos testes do Futebol no ambiente
+**DEV/Kinde Test**; a divulgação desses dados de teste foi expressamente autorizada.
+
+| Conta de teste | Usuário (e-mail) | Senha |
+| --- | --- | --- |
+| Teste 1 | `jaisson+teste1@sabara.org` | Igual ao e-mail completo da conta |
+| Teste 2 | `jaisson+teste2@sabara.org` | Igual ao e-mail completo da conta |
+| Teste 3 | `jaisson+teste3@sabara.org` | Igual ao e-mail completo da conta |
+
+A senha de cada uma das três contas é **literalmente o respectivo e-mail**, incluindo
+`jaisson+` e `@sabara.org`; não é necessária uma senha diferente para cada conta.
+
+Em homologações DEV, o Codex pode utilizar essas contas no navegador de testes,
+sem pedir que o usuário repita credenciais já documentadas. Somente solicitar
+intervenção humana quando houver bloqueio efetivo (por exemplo, MFA, CAPTCHA,
+consentimento externo ou sessão indisponível). Não presumir login bem-sucedido:
+validar a sessão e as permissões antes de executar operações de teste.
+
+Não utilizar estas credenciais no PRD, não alterar usuários/senhas e nunca
+registrar tokens, códigos temporários, cookies, sessões ou segredos de serviços.
+Se as contas passarem a alcançar dados reais ou serviços fora do DEV,
+interromper seu uso automatizado até revisão de segurança.
