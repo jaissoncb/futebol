@@ -1,5 +1,6 @@
 import { drawWithRules, type DrawRule } from './draw-rules'
 import { ALGORITHM_VERSION, drawTeams, mean, randomSource, shuffled, validate, type DrawInput, type DrawPlayer, type DrawTeam } from './engine'
+import { diversify, historicalWeights, type HistoricalSnapshot } from './historical-engine'
 import type { PreferredPosition } from '../groups/group-service'
 
 export const DRAW_MODES = {
@@ -21,11 +22,31 @@ export function meanGap(means: readonly number[]) {
 
 const RULE_VERSIONS = { classic: 'classic-rules-v3', balanced: 'balanced-rules-v3', competitive: 'competitive-rules-v3' } as const
 
-export function modeForVersion(version: string): DrawMode | undefined {
-  return (Object.keys(DRAW_MODES) as DrawMode[]).find(mode => DRAW_MODES[mode].version === version || RULE_VERSIONS[mode] === version)
+const HISTORY_VERSIONS = { balanced: 'balanced-history-v4', competitive: 'competitive-history-v4' } as const
+const RULE_HISTORY_VERSIONS = { balanced: 'balanced-rules-history-v4', competitive: 'competitive-rules-history-v4' } as const
+
+export function usesHistory(version: string) {
+  return Object.values(HISTORY_VERSIONS).some(value => value === version) ||
+    Object.values(RULE_HISTORY_VERSIONS).some(value => value === version)
 }
 
-export function drawByMode(input: SmartInput, mode: DrawMode = 'classic', rules: readonly DrawRule[] = [], name: (id: string) => string = id => id) {
+export function modeForVersion(version: string): DrawMode | undefined {
+  return (Object.keys(DRAW_MODES) as DrawMode[]).find(mode => DRAW_MODES[mode].version === version || RULE_VERSIONS[mode] === version ||
+    (mode !== 'classic' && (HISTORY_VERSIONS[mode] === version || RULE_HISTORY_VERSIONS[mode] === version)))
+}
+
+export function drawByMode(input: SmartInput, mode: DrawMode = 'classic', rules: readonly DrawRule[] = [], name: (id: string) => string = id => id, history?: HistoricalSnapshot) {
+  const baseline = drawBaseline(input, mode, rules, name)
+  if (mode === 'classic' || !history?.length) return baseline
+  const weights = historicalWeights(history, new Set(input.players.map(player => player.id)))
+  if (!weights.size) return baseline
+  return {
+    ...diversify(input, baseline, mode, rules, weights),
+    algorithmVersion: (rules.length ? RULE_HISTORY_VERSIONS : HISTORY_VERSIONS)[mode],
+  }
+}
+
+function drawBaseline(input: SmartInput, mode: DrawMode, rules: readonly DrawRule[], name: (id: string) => string) {
   if (rules.length) {
     const teams = drawWithRules(input, rules, lineup => {
       if (mode === 'classic') return meanGap(lineup.map(mean))

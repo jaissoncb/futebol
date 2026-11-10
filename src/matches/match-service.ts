@@ -22,6 +22,8 @@ export async function loadSavedMatch(client: FutebolDataClient, groupId: string,
   return client.savedMatch(groupId, id)
 }
 
+export class IncompleteSavedMatchError extends Error {}
+
 export function validateSavedMatch(saved: SavedMatch): SavedMatch {
   const participantIds = new Set(saved.participants.map((row) => row.player_id))
   const teamIds = new Set(saved.teams.map((row) => row.id))
@@ -32,7 +34,7 @@ export function validateSavedMatch(saved: SavedMatch): SavedMatch {
     || saved.participants.some((row) => row.attendance_status !== 'present')
     || saved.teams.some((row, index) => row.team_index !== index + 1)
     || saved.runs.some((row, index) => row.run_number !== index + 1)
-    || saved.assignments.some((row) => !participantIds.has(row.player_id) || !teamIds.has(row.team_id))) throw new Error('Resultado salvo incompleto.')
+    || saved.assignments.some((row) => !participantIds.has(row.player_id) || !teamIds.has(row.team_id))) throw new IncompleteSavedMatchError('Resultado salvo incompleto.')
   const lineup = { playersOnCourt: saved.match.players_on_court, teams: saved.teams.map((team) => ({
     playerIds: saved.assignments.filter((row) => row.team_id === team.id).map((row) => row.player_id),
     reserveIds: saved.assignments.filter((row) => row.team_id === team.id && row.starts_as_reserve).map((row) => row.player_id),
@@ -40,6 +42,6 @@ export function validateSavedMatch(saved: SavedMatch): SavedMatch {
   const drawPlayers = new Map(saved.participants.map((row) => [row.player_id, {
     id: row.player_id, skillRating: Number(row.skill_rating_snapshot), isGoalkeeper: row.is_goalkeeper_snapshot,
   }]))
-  if (lineup.teams.some((team) => !team.playerIds.length) || validateAdjustment(lineup, drawPlayers)) throw new Error('Resultado salvo incompleto.')
+  if (lineup.teams.some((team) => !team.playerIds.length) || validateAdjustment(lineup, drawPlayers)) throw new IncompleteSavedMatchError('Resultado salvo incompleto.')
   return saved
 }

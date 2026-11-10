@@ -1,9 +1,11 @@
 import { brokenRule, describeRule, ruleAvailable, type DrawRule } from './draw-rules'
+import { historicalWeights, repeatedPairs, type HistoricalSnapshot } from './historical-engine'
+import { loadDrawHistory } from '../matches/draw-history'
 import { RulesEditor } from './RulesEditor'
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react'
 import type { GroupWithRole, Player } from '../groups/group-service'
 import { DrawInputError, type DrawPlayer, type DrawResult } from './engine'
-import { DRAW_MODES, drawByMode, meanGap, modeForVersion, type DrawMode } from './smart-engine'
+import { DRAW_MODES, drawByMode, meanGap, modeForVersion, usesHistory, type DrawMode } from './smart-engine'
 import { movePlayer, swapCourtStatus, swapPlayers, type AdjustmentState } from './adjustments'
 import { localDateInputValue } from './local-date'
 import type { FutebolDataClient } from '../lib/data-client'
@@ -33,6 +35,17 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const [result, setResult] = useState<DrawResult | null>(null)
   const [adjustment, setAdjustment] = useState<AdjustmentState | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [historyFailed, setHistoryFailed] = useState(false)
+  const [historySummary, setHistorySummary] = useState<string | null>(null)
+  const history = useRef<{ key: string; snapshot: HistoricalSnapshot } | null>(null)
+  const historyScope = useRef<AbortController | null>(null)
+  useEffect(() => {
+    const scope = new AbortController()
+    historyScope.current = scope
+    const clear = () => { scope.abort(); history.current = null }
+    const unsubscribe = client?.subscribeClosed?.(clear)
+    return () => { clear(); unsubscribe?.() }
+  }, [client, group.id])
   const [busy, setBusy] = useState(false)
   const [runs, setRuns] = useState<DrawResult[]>([])
   const [drawContext, setDrawContext] = useState('')
@@ -64,7 +77,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     active: true, created_at: '', updated_at: '',
   })) : eligible
 
-  function invalidate() { setResult(null); setAdjustment(null); setRuns([]); setDrawContext('') }
+  function invalidate() { setResult(null); setAdjustment(null); setRuns([]); setDrawContext(''); setHistorySummary(null); setHistoryFailed(false) }
   async function confirmDiscard() {
     return !adjustment || !result || sameTeams(adjustment, editableResult(result, config.playersOnCourt)) ||
       await confirm({ title: 'Descartar ajustes da escalação?', message: 'Esta alteração exige um novo sorteio e descarta os ajustes manuais.', action: 'Descartar ajustes e continuar' })
@@ -102,10 +115,36 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     if (isReroll && adjustment && result && !sameTeams(adjustment, editableResult(result, config.playersOnCourt)) && !await confirm({ title: 'Sortear novamente?', message: 'Um novo sorteio descartará os ajustes manuais desta escalação.', action: 'Descartar ajustes e sortear' })) return
     if (!isReroll && !await confirmDiscard()) return
     if (drawing.current) return
-    drawing.current = true; setBusy(true); setError(null)
+    drawing.current = true; setBusy(true); setError(null); setHistoryFailed(false)
+    const signal = historyScope.current?.signal
     await new Promise<void>((resolve) => setTimeout(resolve, 0))
     try {
-      const next = drawByMode({ ...input(), seed: newSeed() }, config.drawMode, rules, id => eligible.find(player => player.id === id)?.name ?? id)
+      if (signal?.aborted) return
+      let snapshot: HistoricalSnapshot | undefined
+      if (config.avoidRecentRepeats && config.drawMode !== 'classic') {
+        const key = JSON.stringify([config.matchDate, config.matchTime])
+        try {
+          if (!client || !signal || client.isClosed()) throw new Error()
+          if (history.current?.key !== key) {
+            const loaded = await loadDrawHistory(client, group.id, config.matchDate, config.matchTime, signal)
+            signal.throwIfAborted()
+            history.current = { key, snapshot: loaded }
+          }
+          snapshot = history.current.snapshot
+        } catch {
+          if (!signal?.aborted) setHistoryFailed(true)
+          return
+        }
+      }
+      const drawInput = { ...input(), seed: newSeed() }
+      const next = drawByMode(drawInput, config.drawMode, rules, id => eligible.find(player => player.id === id)?.name ?? id, snapshot)
+      if (!snapshot) setHistorySummary(null)
+      else if (!usesHistory(next.algorithmVersion)) {
+        setHistorySummary(`Histórico ativado · ${snapshot.length} partida(s) considerada(s). Histórico insuficiente para comparar pares deste elenco.`)
+      } else {
+        const pairs = repeatedPairs(next.teams, historicalWeights(snapshot, new Set(drawInput.players.map(player => player.id))))
+        setHistorySummary(`Histórico ativado · ${snapshot.length} partida(s) considerada(s). No sorteio-base, ${pairs.roster} par(es) já jogaram juntos, com ${pairs.starters} repetição(ões) entre titulares.`)
+      }
       setResult(next); setAdjustment(editableResult(next, config.playersOnCourt))
       setRuns((previous) => drawContext === context ? [...previous, next] : [next]); setDrawContext(context)
       setStep('result')
@@ -138,11 +177,13 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'O jogo existe apenas nesta tela até você salvar e aceitar o sorteio.'}</p>
     {step === 'details' ? <Details initial={config} onContinue={next => void beginGame(next)} /> : null}
     {step === 'participants' ? <Participants busy={busy} config={config} error={error} players={eligible} selected={selectedEligible} rules={rules} rulesNotice={rulesNotice} onRulesChange={changeRules} onBack={() => { setError(null); setStep('details') }} onDraw={() => void draw()} onSelectedChange={ids => void changeParticipants(ids)} /> : null}
+    {historyFailed && <div><p className="form-status" role="alert">Não foi possível carregar o histórico. Tente sortear novamente ou desative o histórico para continuar.</p><button type="button" className="quiet-action" disabled={busy || locked} onClick={() => { setConfig({ ...config, avoidRecentRepeats: false }); invalidate(); setStep('participants') }}>Desativar histórico</button></div>}
     {step === 'result' && stale && !locked ? <div role="status"><p>O elenco ou a configuração mudou. Faça um novo sorteio; os sorteios anteriores serão descartados.</p><button className="quiet-action" onClick={() => { invalidate(); setSelected(selectedEligible); setStep('participants') }}>Revisar participantes</button></div> : null}
     {step === 'result' && result && adjustment && (!stale || locked) ? <>
       <fieldset className="result-editing" disabled={busy || locked}><legend className="sr-only">Ajustes da escalação</legend>
         <Results config={config} players={resultPlayers} original={result} state={adjustment} rules={rules} busy={busy} locked={locked} error={null} onChange={(next) => { if (!locked) setAdjustment(next) }} onReroll={() => void draw(true)} onEditGame={() => setStep('details')} onEditParticipants={() => setStep('participants')} />
       </fieldset>
+      {historySummary && <p role="status">{historySummary}</p>}
       <p>{runs.length} sorteio(s) nesta partida. Somente o último será aceito.</p>
       {error ? <p className="form-status" role="alert">{error}</p> : null}
       <div className="save-draw-actions">{saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving'} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}</div>
@@ -154,6 +195,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
 
 function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (value: GameConfig) => void }) {
   const [mode, setMode] = useState<DrawMode>(initial.drawMode ?? 'classic')
+  const [avoidRecentRepeats, setAvoidRecentRepeats] = useState(Boolean(initial.avoidRecentRepeats))
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
@@ -164,6 +206,7 @@ function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (va
       playersOnCourt: Number(form.get('playersOnCourt')),
       teamCount: Number(form.get('teamCount')),
       drawMode: mode,
+      ...(mode !== 'classic' && avoidRecentRepeats ? { avoidRecentRepeats: true } : {}),
     })
   }
   return <form className="data-form" onSubmit={submit}>
@@ -182,6 +225,10 @@ function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (va
       </select>
     </label>
     <p id="draw-mode-description" className="game-flow-note">{DRAW_MODES[mode].description}</p>
+    {mode !== 'classic' && <div>
+      <label className="draw-player-option"><input type="checkbox" checked={avoidRecentRepeats} aria-describedby="draw-history-description" onChange={event => setAvoidRecentRepeats(event.target.checked)} />Evitar repetições recentes</label>
+      <p className="game-flow-note" id="draw-history-description">Considera até 10 partidas do grupo para variar as duplas. As regras obrigatórias e o equilíbrio dos times continuam prioritários.</p>
+    </div>}
     <button className="solid-action" type="submit">Selecionar participantes</button>
   </form>
 }
@@ -195,6 +242,7 @@ function Participants({ busy, config, error, players, selected, rules, rulesNoti
   const toggle = (id: string, checked: boolean) => onSelectedChange(checked ? [...selected, id] : selected.filter((entry) => entry !== id))
   return <div className="game-participants">
     <p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time · {DRAW_MODES[config.drawMode ?? 'classic'].label}</p>
+    {config.avoidRecentRepeats && <p className="game-flow-note">Evitar repetições recentes está ativado.</p>}
     <label className="search-field">Buscar participantes<input type="search" value={query} maxLength={80} placeholder="Nome ou apelido" disabled={busy} onChange={event => { event.stopPropagation(); setQuery(event.target.value) }} /></label>
     <div className="draw-actions">
       <button className="quiet-action" type="button" disabled={busy || !visible.length} onClick={() => onSelectedChange([...new Set([...selected, ...visible.map(p => p.id)])])}>{filtering ? `Selecionar encontrados (${visible.length})` : 'Selecionar todos'}</button>

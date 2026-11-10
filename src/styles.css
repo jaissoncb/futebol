@@ -826,6 +826,7 @@ h2 {
 .draw-controls { min-width: 0; border: 0; padding: 0; margin: 0; display: grid; gap: 0.8rem; }
 .draw-controls legend { padding: 0; margin-bottom: 0.75rem; font-weight: 700; }
 .draw-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.data-form .draw-player-option input { min-height: 0; padding: 0; }
 .data-form .draw-player-option { display: flex; align-items: center; gap: 0.75rem; min-height: 48px; cursor: pointer; }
 .draw-player-option input { width: 1.25rem; height: 1.25rem; flex-shrink: 0; }
 .draw-player-option span { overflow-wrap: anywhere; }

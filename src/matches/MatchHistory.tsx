@@ -1,3 +1,4 @@
+import { usesHistory } from '../draw/smart-engine'
 import { useEffect, useRef, useState } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
 import type { GroupWithRole } from '../groups/group-service'
@@ -103,6 +104,7 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
       })}</ul>{!saved.assignments.some((a) => a.team_id === team.id && a.starts_as_reserve === reserve) ? <p>Nenhum</p> : null}</section>)}</TeamCard>)}</div>
       <details className="saved-draw-data"><summary>Informações dos sorteios ({saved.runs.length})</summary><ol>{saved.runs.map((run) => <li key={run.id}>Sorteio {run.run_number}{run.accepted ? ' · Aceito (sorteio-base)' : ' · Não aceito'}<br />Código do sorteio: <code>{run.seed}</code><br />Versão: <code>{run.algorithm_version}</code> · Diferença entre médias: {Number(run.balance_score).toFixed(3)}</li>)}</ol></details>
       <p className="game-flow-note">A escalação acima é o resultado final salvo, incluindo ajustes manuais. O código identifica o sorteio-base.</p>
+      {saved.runs.some(run => usesHistory(run.algorithm_version)) && <p className="game-flow-note">Para reproduzir um sorteio com histórico, é necessário o mesmo histórico usado na ocasião. A partida salva conserva a escalação final.</p>}
       <div className="game-flow-actions">
         <button className="quiet-action" disabled={sharing || copying} onClick={() => void copy()}>{copying ? 'Copiando…' : 'Copiar resultado'}</button>
         <button className="solid-action" disabled={sharing || copying} onClick={() => void share()}>{sharing ? 'Compartilhando…' : 'Compartilhar resultado'}</button>
