@@ -13,6 +13,7 @@ import {
   updateGroup,
   updatePlayer,
   type GroupInput,
+  type GroupWorkspaceData,
   type GroupWithRole,
   type Player,
   type PlayerInput,
@@ -25,6 +26,7 @@ interface GroupDashboardProps {
   client: FutebolDataClient | null
   userId: string
   onAttemptChange?: (pending: boolean) => void
+  verifiedData?: GroupWorkspaceData
 }
 
 const EMPTY_GROUP: GroupInput = { defaultPlayersOnCourt: 5, name: '', sport: 'futsal' }
@@ -47,11 +49,11 @@ const POSITION_LABELS: Record<PreferredPosition, string> = {
 
 const ROLE_LABELS = { owner: 'Proprietário', admin: 'Administrador', member: 'Membro' } as const
 
-export function GroupDashboard({ client, userId, onAttemptChange }: GroupDashboardProps) {
-  return <GroupDashboardContent key={userId} client={client} userId={userId} onAttemptChange={onAttemptChange} />
+export function GroupDashboard(props: GroupDashboardProps) {
+  return <GroupDashboardContent key={props.userId} {...props} />
 }
 
-function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboardProps) {
+function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }: GroupDashboardProps) {
   const { confirm, dialogProps } = useConfirmation()
   const sectionPrefix = useId()
   const [playerSearch, setPlayerSearch] = useState({ groupId: '', query: '' })
@@ -66,11 +68,46 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
   const [matchAttemptPending, setMatchAttemptPending] = useState(false)
   const [matchDraftDirty, setMatchDraftDirty] = useState(false)
   const [formPending, setFormPending] = useState(false)
+  const [authorization, setAuthorization] = useState<{ data?: GroupWorkspaceData; version: number }>({ version: 0 })
+  if (verifiedData && authorization.data !== verifiedData) {
+    setAuthorization({ data: verifiedData, version: authorization.version + 1 })
+    setGroups(verifiedData.groups)
+    setPlayers(verifiedData.players)
+    setError(null)
+    setLoading(false)
+    if (selectedGroupId && !verifiedData.groups.some(group => group.id === selectedGroupId)) {
+      setSelectedGroupId(verifiedData.groups[0]?.id ?? null)
+      setEditingPlayer(null)
+      setShowSettings(false)
+      setMatchAttemptPending(false)
+      setMatchDraftDirty(false)
+    } else if (selectedGroupId) {
+      const previousRole = groups.find(group => group.id === selectedGroupId)?.role
+      const currentRole = verifiedData.groups.find(group => group.id === selectedGroupId)?.role
+      if (currentRole === 'member' && previousRole !== 'member') {
+        setEditingPlayer(null)
+        setMatchAttemptPending(false)
+        setMatchDraftDirty(false)
+      }
+      if (currentRole !== 'owner') setShowSettings(false)
+    }
+  }
   const navigationLocked = matchAttemptPending || formPending
   useEffect(() => { onAttemptChange?.(navigationLocked || matchDraftDirty) }, [navigationLocked, matchDraftDirty, onAttemptChange])
   useEffect(() => {
-    if (!loading && !error) rememberSelectedGroup(userId, selectedGroupId)
-  }, [userId, selectedGroupId, loading, error])
+    if (!loading && !error && (selectedGroupId || !verifiedData?.groups.length)) rememberSelectedGroup(userId, selectedGroupId)
+  }, [userId, selectedGroupId, loading, error, verifiedData])
+
+  useEffect(() => {
+    if (!verifiedData) return
+    let cancelled = false
+    const preferred = readSelectedGroup(userId)
+    void Promise.resolve().then(() => {
+      if (!cancelled) setSelectedGroupId(current => current ??
+        verifiedData.groups.find(group => group.id === preferred)?.id ?? verifiedData.groups[0]?.id ?? null)
+    })
+    return () => { cancelled = true }
+  }, [userId, verifiedData])
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!client) {
@@ -104,6 +141,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
   }, [client, userId, selectedGroupId, matchDraftDirty, confirm])
 
   useEffect(() => {
+    if (verifiedData) return
     let cancelled = false
 
     if (!client) {
@@ -132,7 +170,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
       })
 
     return () => { cancelled = true }
-  }, [client, userId])
+  }, [client, userId, verifiedData])
 
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null
   const selectedPlayers = useMemo(
@@ -140,6 +178,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
     [players, selectedGroupId],
   )
   const canManagePlayers = selectedGroup?.role === 'owner' || selectedGroup?.role === 'admin'
+  const currentPlayer = editingPlayer === 'new' ? editingPlayer : selectedPlayers.find(player => player.id === editingPlayer?.id)
   const query = playerSearch.groupId === selectedGroupId ? playerSearch.query : ''
   const visiblePlayers = searchPlayers(selectedPlayers, query)
   function goTo(section: string) {
@@ -259,7 +298,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
             <button type="button" aria-controls={`${sectionPrefix}-history`} onClick={() => goTo('history')}>Histórico</button>
           </nav>
           <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status">Carregando partidas…</p>}>
-            <MatchWorkspace key={selectedGroup.id} client={client} group={selectedGroup} players={selectedPlayers} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} />
+            <MatchWorkspace key={`${selectedGroup.id}:${canManagePlayers}`} client={client} group={selectedGroup} players={selectedPlayers} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} authorizationVersion={authorization.version} />
           </Suspense></MatchModuleBoundary>
 
           <section className="players-section" id={`${sectionPrefix}-players`} tabIndex={-1} aria-label="Elenco do grupo">
@@ -274,14 +313,14 @@ function GroupDashboardContent({ client, userId, onAttemptChange }: GroupDashboa
             </div>
             {selectedPlayers.length ? <label className="search-field">Buscar no elenco<input type="search" placeholder="Nome ou apelido" maxLength={80} value={query} onChange={event => setPlayerSearch({ groupId: selectedGroup.id, query: event.target.value })} /></label> : null}
 
-            {editingPlayer && canManagePlayers ? (
-              <section className="panel compact-panel" aria-label={editingPlayer === 'new' ? 'Novo jogador' : 'Editar jogador'}>
+            {currentPlayer && canManagePlayers ? (
+              <section className="panel compact-panel" aria-label={currentPlayer === 'new' ? 'Novo jogador' : 'Editar jogador'}>
                 <PlayerForm
-                  key={editingPlayer === 'new' ? 'new' : editingPlayer.id}
+                  key={currentPlayer === 'new' ? 'new' : currentPlayer.id}
                   client={client}
                   groupId={selectedGroup.id}
-                  initialValue={editingPlayer === 'new' ? EMPTY_PLAYER : playerToInput(editingPlayer)}
-                  playerId={editingPlayer === 'new' ? undefined : editingPlayer.id}
+                  initialValue={currentPlayer === 'new' ? EMPTY_PLAYER : playerToInput(currentPlayer)}
+                  playerId={currentPlayer === 'new' ? undefined : currentPlayer.id}
                   onBusyChange={setFormPending}
                   onCancel={() => setEditingPlayer(null)}
                   onSaved={async () => { setEditingPlayer(null); await refresh(selectedGroup.id) }}

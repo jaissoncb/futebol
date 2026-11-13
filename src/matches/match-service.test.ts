@@ -40,7 +40,7 @@ describe('match-service through the authenticated API', () => {
     }))
     const client = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('synthetic-access'), transport)
     try {
-      const assertion = expect(saveMatchDraw(client, matchId, payload)).rejects.toMatchObject({ name: 'AbortError' })
+      const assertion = expect(saveMatchDraw(client, matchId, payload)).rejects.toMatchObject({ kind: 'transport', status: 0 })
       await vi.advanceTimersByTimeAsync(20000)
       await assertion
       expect(transport.mock.calls[0]![1]?.signal?.aborted).toBe(true)

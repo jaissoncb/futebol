@@ -8,13 +8,16 @@ function id(value: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new ApiError(400)
   return value
 }
-export function createFutebolApiServices(baseUrl: string, getAccessToken: () => Promise<string | null>, transport = fetch) {
-  const client = createApiClient(baseUrl, getAccessToken, transport)
+export function createFutebolApiServices(baseUrl: string, getAccessToken: () => Promise<string | null>, transport = fetch,
+  onFailure?: (error: ApiError, path: string) => void) {
+  const client = createApiClient(baseUrl, getAccessToken, transport, onFailure)
   return {
     kind: 'futebol-api' as const,
     isClosed: client.isClosed,
     subscribeClosed: client.subscribeClosed,
     close: () => client.close(),
+    suspend: client.suspend,
+    resume: () => client.resume(),
     async me() {
       const profile = await client.request<{ id: string; display_name: string | null }>('/me')
       id(profile.id)

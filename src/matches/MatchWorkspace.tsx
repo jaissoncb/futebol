@@ -9,7 +9,7 @@ import { ConfirmationDialog } from '../ConfirmationDialog'
 import { useConfirmation } from '../useConfirmation'
 
 /** Keep the draft mounted when history opens; a saved result is immutable. */
-export function MatchWorkspace({ client, group, players, onAttemptChange, onDraftChange, gameId, historyId }: { client: FutebolDataClient | null; group: GroupWithRole; players: Player[]; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; gameId?: string; historyId?: string }) {
+export function MatchWorkspace({ client, group, players, onAttemptChange, onDraftChange, gameId, historyId, authorizationVersion }: { client: FutebolDataClient | null; group: GroupWithRole; players: Player[]; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; gameId?: string; historyId?: string; authorizationVersion?: number }) {
   const { confirm, dialogProps } = useConfirmation()
   const [open, setOpen] = useState(false)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -49,12 +49,12 @@ export function MatchWorkspace({ client, group, players, onAttemptChange, onDraf
       {group.role !== 'member' ? <div className="repeat-game"><button className="quiet-action" disabled={repeating || attemptPending} onClick={() => void repeatLast()}>{repeating ? 'Preparando partida…' : 'Repetir última partida'}</button><small>Cria um rascunho com a data de hoje. O histórico permanece intacto.</small></div> : null}
       {repeatNotice ? <p className="notice" role="status">{repeatNotice}</p> : null}
       {repeatError ? <p className="form-status" role="alert">{repeatError}</p> : null}
-      <GameFlow key={session} client={client} group={group} players={players} initialDraft={draft} onAttemptChange={attemptChanged} onDraftChange={draftChanged} onSaved={(id) => { setRepeatNotice(null); setSaved(true); setSelectedId(id); setOpen(true) }} />
+      <GameFlow key={session} client={client} group={group} players={players} initialDraft={draft} onAttemptChange={attemptChanged} onDraftChange={draftChanged} authorizationVersion={authorizationVersion} onSaved={(id) => { setRepeatNotice(null); setSaved(true); setSelectedId(id); setOpen(true) }} />
       {saved ? <button className="quiet-action" type="button" onClick={() => { setDraft(undefined); setRepeatNotice(null); setSession(n => n + 1); setSaved(false) }}>Criar outra partida</button> : null}
     </section>
     <section id={historyId} tabIndex={-1} className="panel match-history" aria-label="Histórico de partidas">
       <div className="section-title-row"><h2>Histórico de partidas</h2><button className="quiet-action" type="button" onClick={() => { setOpen(!open); if (open) setSelectedId(null) }}>{open ? 'Fechar histórico' : 'Abrir histórico'}</button></div>
-      {open ? <MatchHistory client={client} group={group} selectedId={selectedId} onSelect={setSelectedId} /> : null}
+      {open ? <MatchHistory key={authorizationVersion} client={client} group={group} selectedId={selectedId} onSelect={setSelectedId} /> : null}
     </section>
   </>
 }

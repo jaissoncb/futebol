@@ -1,158 +1,324 @@
 // @vitest-environment-options {"url":"http://localhost:5173/"}
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setActiveStorage, StorageKeys } from '@kinde-oss/kinde-auth-react/utils'
 import { configureKindeSession, KINDE_SCOPE } from '../auth/kinde-session'
 import { FutebolRoot } from './FutebolRoot'
 import dev from '../../deployment/frontend-dev.json'
 import { validateFutebolEnvironment } from '../config/futebol-environment'
 import { readSelectedGroup, rememberSelectedGroup } from '../groups/selected-group'
+import { group, players } from '../matches/test-fixtures'
 
 const config = validateFutebolEnvironment(dev, 'dev')
 const profileId = 'd0000000-0000-0000-0000-000000000001'
+const anotherId = 'd0000000-0000-0000-0000-000000000002'
 const mocks = vi.hoisted(() => ({
-  provider: vi.fn<(props: Record<string, unknown>) => void>(),
-  auth: { isAuthenticated: true, getAccessToken: vi.fn<() => Promise<string | undefined>>(), logout: vi.fn<() => Promise<void>>() },
+  provider: vi.fn<(props: Record<string, unknown>) => boolean | undefined>(),
+  auth: { isAuthenticated: true, isLoading: false, user: { id: 'fixture' }, logout: vi.fn<() => Promise<void>>() },
 }))
 vi.mock('@kinde-oss/kinde-auth-react', () => ({
-  KindeProvider: ({ children, ...props }: { children: ReactNode }) => { mocks.provider(props); return children },
+  KindeProvider: ({ children, ...props }: { children: ReactNode }) => mocks.provider(props) === false ? null : children,
   useKindeAuth: () => mocks.auth,
 }))
-function transport() {
-  return vi.fn<typeof fetch>().mockImplementation(url => Promise.resolve(Response.json(
-    (url as URL).pathname === '/workspace' ? { groups: [], players: [] } : { id: profileId, display_name: null })))
-}
-function callbacks() {
-  return mocks.provider.mock.lastCall![0].callbacks as {
-    onEvent: (event: string, result: { success: boolean }) => void
-    onError: (failure: { error: string; errorDescription: string }, state: unknown, context: typeof mocks.auth) => void
-  }
-}
 
-describe('public Futebol session boundary', () => {
-  beforeEach(() => {
-    vi.clearAllMocks(); localStorage.clear(); sessionStorage.clear(); window.history.replaceState({}, '', '/#/')
-    mocks.auth.isAuthenticated = true
-    mocks.auth.getAccessToken.mockResolvedValue('synthetic-memory-access')
-    mocks.auth.logout.mockResolvedValue(undefined)
-  })
-  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); localStorage.clear() })
+const jwt = (lifetime: number, subject = 'fixture') =>
+  'e30.' + btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + lifetime, sub: subject })).replace(/=+$/, '') + '.fixture'
+const requestUrl = (input: RequestInfo | URL) => new URL(input instanceof Request ? input.url : input)
+const draftField = () => screen.getByRole('textbox', { name: /Nome.*opcional/ })
+const signIn = () => screen.getByRole('button', { name: 'Entrar com Sabará ID' })
+const foreground = () => fireEvent(document, new Event('visibilitychange'))
+const disconnect = () => fireEvent(window, new Event('offline'))
+const connect = () => fireEvent(window, new Event('online'))
 
-  it('uses SDK memory/PKCE options and shows no diagnostics or private requests while anonymous', () => {
-    mocks.auth.isAuthenticated = false
-    const request = transport(); vi.stubGlobal('fetch', request)
-    const session = configureKindeSession()
-    render(<FutebolRoot config={config} session={session} />)
-    expect(mocks.provider.mock.calls[0]![0]).toMatchObject({ ...config.identity, scope: KINDE_SCOPE,
-      store: session.memory, useInsecureForRefreshToken: false, refreshOnFocus: true })
-    expect(screen.getByRole('button', { name: 'Entrar com Sabará ID' })).toBeVisible()
-    expect(screen.queryByLabelText(/senha/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/diagnóstico|estabilização|probe/i)).not.toBeInTheDocument()
-    expect(request).not.toHaveBeenCalled()
-  })
-  it('opens the existing domain UI automatically after one /me from the configured HTTPS Function', async () => {
-    const request = transport(); vi.stubGlobal('fetch', request)
-    render(<FutebolRoot config={config} session={configureKindeSession()} />)
-    expect(await screen.findByRole('button', { name: 'Criar grupo' })).toBeVisible()
-    expect(request.mock.calls.filter(([url]) => (url as URL).pathname === '/me')).toHaveLength(1)
-    for (const [url, options] of request.mock.calls) {
-      expect((url as URL).origin).toBe(config.apiBaseUrl)
-      expect((url as URL).pathname).not.toContain('__dev')
-      expect(options).toMatchObject({ credentials: 'omit', cache: 'no-store', redirect: 'error',
-        headers: { Authorization: 'Bearer synthetic-memory-access' } })
+function fixture(lifetime = 600) {
+  const session = configureKindeSession()
+  setActiveStorage(session.memory)
+  session.memory.setSessionItem(StorageKeys.accessToken, jwt(lifetime))
+  session.memory.setSessionItem(StorageKeys.refreshToken, 'synthetic-memory-refresh')
+  const destroy = vi.spyOn(session.transaction, 'destroySession')
+  const response = (url: URL) => {
+    switch (url.pathname) {
+      case '/oauth2/token': return Response.json({ access_token: jwt(600), refresh_token: 'rotated', expires_in: 600 })
+      case '/me': return Response.json({ id: profileId })
+      default: return Response.json({ groups: [group], players })
     }
+  }
+  const request = vi.fn<typeof fetch>().mockImplementation(url => Promise.resolve(response(requestUrl(url))))
+  vi.stubGlobal('fetch', request)
+  const view = render(<FutebolRoot config={config} session={session} />)
+  const calls = (path: string) => request.mock.calls.filter(([url]) => requestUrl(url).pathname === path)
+  return { session, destroy, response, request, view, calls }
+}
+
+describe('Futebol session boundary', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.provider.mockReturnValue(undefined)
+    localStorage.clear()
+    sessionStorage.clear()
+    window.history.replaceState({}, '', '/#/')
+    mocks.auth.isAuthenticated = true
+    mocks.auth.isLoading = false
+    mocks.auth.user = { id: 'fixture' }
+    mocks.auth.logout.mockResolvedValue(undefined)
+    vi.stubGlobal('BroadcastChannel', undefined)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
   })
-  it('aborts pending private access on logout, clears only this session and rejects late data', async () => {
-    rememberSelectedGroup(profileId, 'group-preference')
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('leaves an anonymous startup and its PKCE transaction intact', () => {
+    mocks.auth.isAuthenticated = false
+    mocks.auth.isLoading = true
+    const { request, session, destroy, view } = fixture()
+    const props = mocks.provider.mock.calls[0]![0]
+    expect(props).toMatchObject({ ...config.identity, scope: KINDE_SCOPE, store: session.memory,
+      useInsecureForRefreshToken: false, refreshOnFocus: false })
+    const callbacks = props.callbacks as { onError: (failure: { error: string; errorDescription: string }) => void }
+    window.history.replaceState({}, '', '/?code=synthetic&state=synthetic#/')
+    callbacks.onError({ error: 'ERR_CHECK_AUTH', errorDescription: 'No refresh token found' })
+    mocks.auth.isLoading = false
+    view.rerender(<FutebolRoot config={config} session={session} />)
+    expect(signIn()).toBeVisible()
+    expect(window.location.search).toBe('?code=synthetic&state=synthetic')
+    expect(request).not.toHaveBeenCalled()
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  it('opens only after /me and workspace verify the same bearer against the configured API', async () => {
+    const { calls } = fixture()
+    expect(await screen.findByRole('heading', { name: 'Configure a partida' })).toBeVisible()
+    expect(calls('/me')).toHaveLength(1)
+    expect(calls('/workspace')).toHaveLength(1)
+    for (const [url, options] of [...calls('/me'), ...calls('/workspace')]) {
+      expect((url as URL).origin).toBe(config.apiBaseUrl)
+      expect(options).toMatchObject({ credentials: 'omit', cache: 'no-store', redirect: 'error',
+        headers: { Authorization: expect.stringMatching(/^Bearer /) as string } })
+    }
+    expect(calls('/workspace')[0]?.[1]?.headers).toEqual(calls('/me')[0]?.[1]?.headers)
+  })
+
+  it('keeps a mounted draft across refresh transport failure, offline and revalidation', async () => {
+    const { request, response, calls, destroy, session } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Rascunho transitório' } })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return target.pathname === '/oauth2/token'
+        ? Promise.reject(new TypeError('Failed to fetch')) : Promise.resolve(response(target))
+    })
+    foreground()
+    await waitFor(() => expect(calls('/oauth2/token')).toHaveLength(1))
+    disconnect()
+    expect(screen.getByText(/Sessão temporariamente indisponível/)).toBeVisible()
+    expect(draft).not.toBeVisible()
+    expect(draft).toBeInTheDocument()
+    expect(destroy).not.toHaveBeenCalled()
+    expect(session.memory.getSessionItem(StorageKeys.refreshToken)).toBe('synthetic-memory-refresh')
+    request.mockImplementation(url => Promise.resolve(response(requestUrl(url))))
+    connect()
+    await waitFor(() => expect(draft).toBeVisible())
+    expect(draftField()).toBe(draft)
+    expect(draft).toHaveValue('Rascunho transitório')
+    expect(calls('/oauth2/token')).toHaveLength(2)
+    expect(calls('/me')).toHaveLength(2)
+    expect(calls('/workspace')).toHaveLength(2)
+  })
+
+  it('renews an expired token before sending the first API request', async () => {
+    const { request, calls, session } = fixture(-1)
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(request.mock.calls.map(([url]) => requestUrl(url).pathname)).toEqual(['/oauth2/token', '/me', '/workspace'])
+    const renewed = session.memory.getSessionItem(StorageKeys.accessToken) as string
+    expect(calls('/me')[0]?.[1]?.headers).toEqual({ Authorization: `Bearer ${renewed}` })
+  })
+
+  it('limits automatic retries while a transport failure persists online', async () => {
+    const { request, calls, session } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    request.mockRejectedValue(new TypeError('Failed to fetch'))
+    foreground()
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000) })
+    expect(screen.getByText(/Sessão temporariamente indisponível/)).toBeVisible()
+    foreground(); connect()
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(calls('/oauth2/token')).toHaveLength(2)
+    expect(calls('/workspace')).toHaveLength(1)
+  })
+
+  it('uses explicit re-entry for an opaque SDK HTTP rejection without repeating the exchange', async () => {
+    const { request, calls, destroy, session } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    request.mockResolvedValue(Response.json({ error: 'invalid_grant' }, { status: 400 }))
+    foreground()
+    expect(await screen.findByRole('button', { name: 'Entrar novamente com Sabará ID' })).toBeVisible()
+    foreground(); connect()
+    expect(calls('/oauth2/token')).toHaveLength(1)
+    expect(destroy).not.toHaveBeenCalled()
+    expect(screen.queryByText('invalid_grant')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Configure a partida' })).not.toBeInTheDocument()
+  })
+
+  it('ends a session on a real API 401 after a successful renewal', async () => {
+    const { request, response, calls, destroy } = fixture(-1)
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return Promise.resolve(target.pathname === '/me' ? Response.json({}, { status: 401 }) : response(target))
+    })
+    await screen.findByRole('button', { name: 'Entrar com Sabará ID' })
+    expect(calls('/oauth2/token')).toHaveLength(1)
+    expect(calls('/workspace')).toHaveLength(0)
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('checks current membership on resource 403 without ending the session', async () => {
+    const { request, response, calls, destroy } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      if (target.pathname.endsWith('/matches')) return Promise.resolve(Response.json({}, { status: 403 }))
+      if (target.pathname === '/workspace') return Promise.resolve(Response.json({ groups: [], players: [] }))
+      return Promise.resolve(response(target))
+    })
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Abrir histórico' }))
+    expect(await screen.findByRole('button', { name: 'Criar grupo' })).toBeVisible()
+    expect(screen.queryByText(group.name)).not.toBeInTheDocument()
+    expect(calls('/oauth2/token')).toHaveLength(0)
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  it('treats /me 403 as workspace denial without destroying the SDK session', async () => {
+    const { request, calls, destroy } = fixture()
+    request.mockResolvedValue(Response.json({}, { status: 403 }))
+    expect(await screen.findByText('Seu acesso ao espaço de trabalho não foi confirmado.')).toBeVisible()
+    expect(calls('/workspace')).toHaveLength(0)
+    expect(calls('/oauth2/token')).toHaveLength(0)
+    expect(destroy).not.toHaveBeenCalled()
+  })
+
+  it.each(['/me', '/workspace'])('removes previously authorized data after a definitive %s 403', async (path) => {
+    const { request, response, destroy, calls } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Rascunho revogado' } })
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return Promise.resolve(target.pathname === path ? Response.json({}, { status: 403 }) : response(target))
+    })
+    foreground()
+    await screen.findByText('Seu acesso ao espaço de trabalho não foi confirmado.')
+    expect(draft).not.toBeInTheDocument()
+    expect(screen.queryByText(group.name)).not.toBeInTheDocument()
+    expect(destroy).not.toHaveBeenCalled()
+    expect(calls('/oauth2/token')).toHaveLength(0)
+
+    request.mockImplementation(url => Promise.resolve(response(requestUrl(url))))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Tentar novamente' }))
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(draftField()).toHaveValue('')
+  })
+
+  it('deduplicates foreground, pageshow, reconnect and manual access during an outstanding renewal', async () => {
+    const { request, response, calls, session } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    let release!: (response: Response) => void
+    const pending = new Promise<Response>(resolve => { release = resolve })
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return target.pathname === '/oauth2/token' ? pending : Promise.resolve(response(target))
+    })
+    foreground()
+    await waitFor(() => expect(calls('/oauth2/token')).toHaveLength(1))
+    disconnect(); connect(); foreground()
+    fireEvent(window, Object.assign(new Event('pageshow'), { persisted: true }))
+    expect(calls('/oauth2/token')).toHaveLength(1)
+    await act(async () => { release(response(new URL('/oauth2/token', config.identity.domain))); await pending })
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(calls('/oauth2/token')).toHaveLength(1)
+    expect(calls('/me')).toHaveLength(2)
+  })
+
+  it('aborts pending private data on logout and ignores a late response', async () => {
     let release!: (value: Response) => void
     const pending = new Promise<Response>(resolve => { release = resolve })
-    const request = vi.fn<typeof fetch>().mockReturnValue(pending); vi.stubGlobal('fetch', request)
-    const session = configureKindeSession(), destroy = vi.spyOn(session.transaction, 'destroySession')
-    render(<FutebolRoot config={config} session={session} />)
+    rememberSelectedGroup(profileId, group.id)
+    const { request, destroy } = fixture()
+    request.mockReturnValue(pending)
     await waitFor(() => expect(request).toHaveBeenCalledOnce())
     await userEvent.setup().click(screen.getByRole('button', { name: 'Sair' }))
-    expect(mocks.auth.logout).toHaveBeenCalledWith()
+    expect(mocks.auth.logout).toHaveBeenCalledOnce()
     expect(readSelectedGroup(profileId)).toBeNull()
-    expect(destroy).toHaveBeenCalled()
+    expect(destroy).toHaveBeenCalledOnce()
     expect(request.mock.calls[0]![1]?.signal?.aborted).toBe(true)
     await act(async () => { release(Response.json({ id: profileId })); await pending })
-    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Entrar com Sabará ID' })).toBeVisible()
-  })
-  it('gates refresh on successful official SDK events and removes data if renewed identity changes', async () => {
-    let meCalls = 0
-    const request = transport().mockImplementation(url => Promise.resolve(Response.json(
-      (url as URL).pathname === '/workspace' ? { groups: [], players: [] }
-        : { id: ++meCalls > 1 ? 'd0000000-0000-0000-0000-000000000002' : profileId })))
-    vi.stubGlobal('fetch', request)
-    render(<FutebolRoot config={config} session={configureKindeSession()} />)
-    await screen.findByRole('button', { name: 'Criar grupo' })
-    await act(async () => { callbacks().onEvent('tokenRefreshed', { success: false }); await Promise.resolve() })
-    expect(meCalls).toBe(1)
-    mocks.auth.getAccessToken.mockResolvedValue('synthetic-renewed-access')
-    await act(async () => { callbacks().onEvent('tokenRefreshed', { success: true }); await Promise.resolve() })
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument())
-    expect(screen.getByRole('button', { name: 'Entrar com Sabará ID' })).toBeVisible()
-    expect(request.mock.lastCall![1]?.headers).toMatchObject({ Authorization: 'Bearer synthetic-renewed-access' })
-  })
-  it('leaves a pending OAuth callback intact on anonymous startup and clears private data on real SDK failure', async () => {
-    vi.stubGlobal('fetch', transport())
-    const session = configureKindeSession(), destroy = vi.spyOn(session.transaction, 'destroySession')
-    render(<FutebolRoot config={config} session={session} />)
-    await screen.findByRole('button', { name: 'Criar grupo' })
-    window.history.replaceState({}, '', '/?code=synthetic&state=synthetic#/')
-    await act(async () => { callbacks().onError({ error: 'ERR_CHECK_AUTH', errorDescription: 'No refresh token found' }, {}, { ...mocks.auth, isAuthenticated: false }); await Promise.resolve() })
-    expect(window.location.search).toBe('?code=synthetic&state=synthetic')
-    expect(destroy).not.toHaveBeenCalled()
-    await act(async () => { callbacks().onError({ error: 'ERR_REFRESH_TOKEN', errorDescription: 'SYNTHETIC_PRIVATE_DETAIL' }, {}, mocks.auth); await Promise.resolve() })
-    expect(window.location.search).toBe('')
-    expect(destroy).toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
-    expect(screen.queryByText('SYNTHETIC_PRIVATE_DETAIL')).not.toBeInTheDocument()
-  })
-  it('offers a manual read retry after 503 and never opens groups after denied /me', async () => {
-    const request = transport().mockResolvedValue(Response.json({}, { status: 503 })); vi.stubGlobal('fetch', request)
-    render(<FutebolRoot config={config} session={configureKindeSession()} />)
-    await screen.findByRole('button', { name: 'Tentar novamente' })
+    expect(signIn()).toBeVisible()
     expect(request).toHaveBeenCalledOnce()
-    request.mockResolvedValue(Response.json({}, { status: 401 }))
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Tentar novamente' }))
-    expect(await screen.findByRole('button', { name: 'Entrar com Sabará ID' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
-    expect(request).toHaveBeenCalledTimes(2)
   })
-  it('closes data on another Futebol tab logout without a global Kinde logout', async () => {
-    const channels: { name: string; onmessage: ((event: MessageEvent<unknown>) => void) | null }[] = []
+
+  it('blocks a late SDK refresh from repopulating token storage after cross-tab logout', async () => {
+    const channels: { onmessage: ((event: MessageEvent<unknown>) => void) | null }[] = []
     vi.stubGlobal('BroadcastChannel', class {
-      name: string
       onmessage: ((event: MessageEvent<unknown>) => void) | null = null
-      constructor(name: string) { this.name = name; channels.push(this) }
+      constructor() { channels.push(this) }
       close() { /* disposable channel */ }
     })
-    vi.stubGlobal('fetch', transport())
-    const session = configureKindeSession(), destroy = vi.spyOn(session.transaction, 'destroySession')
-    render(<FutebolRoot config={config} session={session} />)
-    await screen.findByRole('button', { name: 'Criar grupo' })
-    expect(channels[0]?.name).toBe('futebol-dev-session')
-    rememberSelectedGroup(profileId, 'group-in-this-tab')
-    await act(async () => { channels[0]?.onmessage?.(new MessageEvent('message', { data: 'logout' })); await Promise.resolve() })
-    expect(readSelectedGroup(profileId)).toBeNull()
-    expect(destroy).toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
+    const { request, calls, session, response } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    let release!: (value: Response) => void
+    const pending = new Promise<Response>(resolve => { release = resolve })
+    request.mockReturnValue(pending)
+    foreground()
+    await waitFor(() => expect(calls('/oauth2/token')).toHaveLength(1))
+    act(() => channels[0]?.onmessage?.(new MessageEvent('message', { data: 'logout' })))
+    await act(async () => { release(response(new URL('/oauth2/token', config.identity.domain))); await pending })
+    expect(signIn()).toBeVisible()
     expect(mocks.auth.logout).not.toHaveBeenCalled()
+    expect(session.memory.getSessionItem(StorageKeys.accessToken)).toBeNull()
+    expect(session.memory.getSessionItem(StorageKeys.refreshToken)).toBeNull()
+    expect(calls('/me')).toHaveLength(1)
   })
-  it('requires a new /me before reopening data after SDK authentication disappears and returns', async () => {
-    const request = transport(); vi.stubGlobal('fetch', request)
-    const session = configureKindeSession()
-    const view = render(<FutebolRoot config={config} session={session} />)
-    await screen.findByRole('button', { name: 'Criar grupo' })
-    mocks.auth.isAuthenticated = false
+
+  it('discards the previous account when foreground verification returns another internal ID', async () => {
+    const { request, calls, response, destroy, session } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    fireEvent.change(draftField(), { target: { value: 'Somente conta anterior' } })
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(-1))
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return Promise.resolve(target.pathname === '/me' ? Response.json({ id: anotherId }) : response(target))
+    })
+    foreground()
+    await screen.findByRole('button', { name: 'Entrar com Sabará ID' })
+    expect(screen.queryByDisplayValue('Somente conta anterior')).not.toBeInTheDocument()
+    expect(calls('/workspace')).toHaveLength(1)
+    expect(destroy).toHaveBeenCalledOnce()
+  })
+
+  it('handles cross-tab logout before the SDK mounts its children', () => {
+    let receiveLogout: ((event: MessageEvent<unknown>) => void) | undefined
+    vi.stubGlobal('BroadcastChannel', class {
+      set onmessage(listener: (event: MessageEvent<unknown>) => void) { receiveLogout = listener }
+      close() { /* disposable channel */ }
+    })
+    mocks.provider.mockReturnValue(false)
+    mocks.auth.isLoading = true
+    const { request, session, view } = fixture()
+    act(() => receiveLogout?.(new MessageEvent('message', { data: 'logout' })))
+    session.memory.setSessionItem(StorageKeys.accessToken, jwt(600))
+    mocks.provider.mockReturnValue(true)
+    mocks.auth.isLoading = false
     view.rerender(<FutebolRoot config={config} session={session} />)
-    expect(screen.queryByRole('button', { name: 'Criar grupo' })).not.toBeInTheDocument()
-    mocks.auth.isAuthenticated = true
-    view.rerender(<FutebolRoot config={config} session={session} />)
-    await screen.findByRole('button', { name: 'Criar grupo' })
-    expect(request.mock.calls.filter(([url]) => (url as URL).pathname === '/me')).toHaveLength(2)
+    expect(signIn()).toBeVisible()
+    expect(request).not.toHaveBeenCalled()
+    expect(session.memory.getSessionItem(StorageKeys.accessToken)).toBeNull()
   })
 })
