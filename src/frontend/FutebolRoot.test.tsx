@@ -203,6 +203,28 @@ describe('Futebol session boundary', () => {
     expect(destroy).not.toHaveBeenCalled()
   })
 
+  it.each(['/me', '/workspace'])('removes previously authorized data after a definitive %s 403', async (path) => {
+    const { request, response, destroy, calls } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Rascunho revogado' } })
+    request.mockImplementation(url => {
+      const target = requestUrl(url)
+      return Promise.resolve(target.pathname === path ? Response.json({}, { status: 403 }) : response(target))
+    })
+    foreground()
+    await screen.findByText('Seu acesso ao espaço de trabalho não foi confirmado.')
+    expect(draft).not.toBeInTheDocument()
+    expect(screen.queryByText(group.name)).not.toBeInTheDocument()
+    expect(destroy).not.toHaveBeenCalled()
+    expect(calls('/oauth2/token')).toHaveLength(0)
+
+    request.mockImplementation(url => Promise.resolve(response(requestUrl(url))))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Tentar novamente' }))
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(draftField()).toHaveValue('')
+  })
+
   it('deduplicates foreground, pageshow, reconnect and manual access during an outstanding renewal', async () => {
     const { request, response, calls, session } = fixture()
     await screen.findByRole('heading', { name: 'Configure a partida' })

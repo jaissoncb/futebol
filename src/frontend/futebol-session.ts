@@ -39,6 +39,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   let sdkSubject: string | undefined
   let coldFailure: Renewal | undefined
   let checkedToken: string | null = null
+  let verifiedProfileId: string | undefined
   let renewedToken: string | null = null
   let probe: FutebolApiServices | undefined
   let running = false
@@ -77,6 +78,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   const end = () => {
     if (stopped) return
     stopped = true
+    verifiedProfileId = undefined
     invalidate()
     clearTimeout(watchdog)
     services.close()
@@ -165,7 +167,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       probe = verifier
       const profile = await verifier.me()
       if (!current()) return
-      if (snapshot.workspace && profile.id !== snapshot.workspace.internalId) { end(); return }
+      if (verifiedProfileId && profile.id !== verifiedProfileId) { end(); return }
       const data = await verifier.workspace()
       if (!current()) return
       if (token() !== access || expiresAt(access) <= Date.now() + RENEW_EARLY_MS) {
@@ -174,6 +176,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
         return
       }
       checkedToken = access
+      verifiedProfileId = profile.id
       renewedToken = null
       services.resume()
       attempts = 0
@@ -188,7 +191,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
         if (renewedToken && renewedToken === token()) end()
         else { needsRefresh = true; retry() }
       } else if (error instanceof ApiError && error.kind === 'http' && error.status === 403) {
-        publish('denied')
+        publish('denied', null)
       } else {
         retry()
       }
