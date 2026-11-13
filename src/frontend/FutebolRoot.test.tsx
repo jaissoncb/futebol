@@ -1,3 +1,4 @@
+import { IDBFactory, IDBKeyRange } from 'fake-indexeddb'
 // @vitest-environment-options {"url":"http://localhost:5173/"}
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -320,5 +321,26 @@ describe('Futebol session boundary', () => {
     expect(signIn()).toBeVisible()
     expect(request).not.toHaveBeenCalled()
     expect(session.memory.getSessionItem(StorageKeys.accessToken)).toBeNull()
+  })
+  it('invalida o rascunho ao revalidar o grupo com papel de membro', async () => {
+    vi.stubGlobal('indexedDB', new IDBFactory())
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const { request, response } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    fireEvent.change(draftField(), { target: { value: 'Rascunho antes da revogação' } })
+    await screen.findByText('Rascunho guardado neste dispositivo.')
+    request.mockImplementation(input => {
+      const url = requestUrl(input)
+      return Promise.resolve(url.pathname === '/workspace'
+        ? Response.json({ groups: [{ ...group, role: 'member' }], players }) : response(url))
+    })
+    foreground()
+    await screen.findByText('Membro')
+    expect(screen.queryByRole('textbox', { name: /Nome.*opcional/ })).toBeNull()
+    request.mockImplementation(input => Promise.resolve(response(requestUrl(input))))
+    foreground()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(draftField()).toHaveValue('')
   })
 })

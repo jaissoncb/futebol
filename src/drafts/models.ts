@@ -30,7 +30,7 @@ const POSITION = ['goalkeeper', 'defense', 'midfield', 'attack', 'any']
 
 function fields(value: unknown, required: string[], optional: string[] = []): value is Fields {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype && required.every(key => Object.hasOwn(value, key))
+    && Object.getPrototypeOf(Object.getPrototypeOf(value) ?? value) === null && required.every(key => Object.hasOwn(value, key))
     && Object.keys(value).every(key => required.includes(key) || optional.includes(key))
 }
 function text(value: unknown, limit: number): value is string {
