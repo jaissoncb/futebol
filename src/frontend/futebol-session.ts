@@ -4,11 +4,12 @@ import type { configureKindeSession } from '../auth/kinde-session'
 import type { FutebolFrontendConfiguration } from '../config/futebol-environment'
 import type { GroupWorkspaceData } from '../groups/group-service'
 import { ApiError } from '../lib/api/client'
+import { authorizeDrafts, draftIssue, invalidateDrafts, type DraftAccess, type DraftIssue } from '../drafts/store'
 import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Phase = 'opening' | 'anonymous' | 'ready' | 'recovering' | 'unavailable' | 'denied' | 'reauthenticate' | 'ended'
-type Workspace = { services: FutebolApiServices; internalId: string; data: GroupWorkspaceData }
+type Workspace = { services: FutebolApiServices; internalId: string; data: GroupWorkspaceData; drafts: DraftAccess | null; draftIssue?: DraftIssue }
 type Snapshot = { phase: Phase; workspace: Workspace | null }
 type Renewal = 'transport' | 'missing' | 'unknown'
 const RENEW_EARLY_MS = 10_000
@@ -42,6 +43,8 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   let verifiedProfileId: string | undefined
   let renewedToken: string | null = null
   let probe: FutebolApiServices | undefined
+  let draftLease: AbortController | undefined
+  let draftAccess: DraftAccess | null = null
   let running = false
   let queued = false
   let revision = 0
@@ -74,6 +77,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
     revision++
     suspend()
     probe?.close()
+    draftLease?.abort()
   }
   const end = () => {
     if (stopped) return
@@ -167,8 +171,22 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       probe = verifier
       const profile = await verifier.me()
       if (!current()) return
-      if (verifiedProfileId && profile.id !== verifiedProfileId) { end(); return }
+      if (verifiedProfileId && profile.id !== verifiedProfileId) { end(); void invalidateDrafts(config.environment).catch(() => undefined); return }
       const data = await verifier.workspace()
+      if (!current()) return
+      draftLease = new AbortController()
+      let storageIssue: DraftIssue | undefined
+      const allowed = data.groups.filter(group => group.role === 'owner' || group.role === 'admin').map(group => group.id)
+      try {
+        draftAccess = await authorizeDrafts(config.environment, profile.id, allowed, draftLease.signal, draftAccess)
+      } catch (error) {
+        storageIssue = draftIssue(error)
+        if (storageIssue === 'revoked' && current()) { end(); return }
+        if (draftAccess) {
+          const stillAllowed = new Set(allowed)
+          draftAccess = { ...draftAccess, groups: new Map([...draftAccess.groups].filter(([group]) => stillAllowed.has(group))) }
+        }
+      }
       if (!current()) return
       if (token() !== access || expiresAt(access) <= Date.now() + RENEW_EARLY_MS) {
         needsRefresh = expiresAt(token()) <= Date.now() + RENEW_EARLY_MS
@@ -180,7 +198,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       renewedToken = null
       services.resume()
       attempts = 0
-      publish('ready', { services, internalId: profile.id, data })
+      publish('ready', { services, internalId: profile.id, data, drafts: draftAccess, draftIssue: storageIssue })
       timer = setTimeout(() => {
         needsRefresh = true
         requestCheck()
@@ -191,6 +209,8 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
         if (renewedToken && renewedToken === token()) end()
         else { needsRefresh = true; retry() }
       } else if (error instanceof ApiError && error.kind === 'http' && error.status === 403) {
+        void invalidateDrafts(config.environment).catch(() => undefined)
+        draftAccess = null
         publish('denied', null)
       } else {
         retry()
@@ -223,7 +243,11 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       if (loading) return
       clearRefreshTimer()
       if (stopped) return
-      if (sdkAuthenticated && (!authenticated || (sdkSubject && subject && sdkSubject !== subject))) { end(); return }
+      if (sdkAuthenticated && (!authenticated || (sdkSubject && subject && sdkSubject !== subject))) {
+        if (authenticated) void invalidateDrafts(config.environment).catch(() => undefined)
+        end()
+        return
+      }
       sdkAuthenticated = authenticated
       if (subject) sdkSubject = subject
       if (!initialized) {

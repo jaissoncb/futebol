@@ -1,3 +1,6 @@
+import { type DetailsInput, type DrawAttempt, type GameStep, type MatchDraft } from '../drafts/models'
+import { useDraftAutosave, type DraftWriter } from '../drafts/use-draft'
+import { reconcileAttempt } from '../drafts/reconcile'
 import { brokenRule, describeRule, ruleAvailable, type DrawRule } from './draw-rules'
 import { historicalWeights, repeatedPairs, type HistoricalSnapshot } from './historical-engine'
 import { loadDrawHistory } from '../matches/draw-history'
@@ -9,7 +12,7 @@ import { DRAW_MODES, drawByMode, meanGap, modeForVersion, usesHistory, type Draw
 import { movePlayer, swapCourtStatus, swapPlayers, type AdjustmentState } from './adjustments'
 import { localDateInputValue } from './local-date'
 import type { FutebolDataClient } from '../lib/data-client'
-import { buildDrawPayload, TEAM_NAMES, type GameConfig, type SaveDrawPayload } from '../matches/draw-payload'
+import { buildDrawPayload, TEAM_NAMES, type GameConfig } from '../matches/draw-payload'
 import { saveMatchDraw } from '../matches/match-service'
 import type { RepeatDraft } from '../matches/repeat-match'
 import { searchPlayers } from '../groups/player-search'
@@ -17,26 +20,25 @@ import { TeamCard } from './TeamCard'
 import { ConfirmationDialog } from '../ConfirmationDialog'
 import { useConfirmation } from '../useConfirmation'
 
-type GameStep = 'details' | 'participants' | 'result'
-
 type SelectedPlayer = { teamIndex: number; id: string } | null
 
 function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentState {
   return { playersOnCourt, teams: result.teams.map((team) => ({ playerIds: [...team.playerIds], reserveIds: [...team.reserveIds] })) }
 }
 
-export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft, authorizationVersion }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft; authorizationVersion?: number }) {
+export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft, authorizationVersion, restored, writer, requireDurable, draftUserId, onDiscard }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft; authorizationVersion?: number; restored?: MatchDraft | null; writer?: DraftWriter<MatchDraft>; requireDurable?: boolean; draftUserId?: string; onDiscard?: () => void }) {
   const { confirm, dialogProps } = useConfirmation()
-  const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
-  const [config, setConfig] = useState<GameConfig>(initialDraft ? { ...initialDraft.config, drawMode: initialDraft.config.drawMode ?? 'classic' } : { drawMode: 'classic', name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
-  const [selected, setSelected] = useState<string[]>(initialDraft?.selectedIds ?? [])
-  const [rules, setRules] = useState<DrawRule[]>([])
+  const [step, setStep] = useState<GameStep>(restored?.step ?? (initialDraft ? 'participants' : 'details'))
+  const [config, setConfig] = useState<GameConfig>(restored?.config ?? (initialDraft ? { ...initialDraft.config, drawMode: initialDraft.config.drawMode ?? 'classic' } : { drawMode: 'classic', name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 }))
+  const [details, setDetails] = useState<DetailsInput>(restored?.details ?? detailsInput(config))
+  const [selected, setSelected] = useState<string[]>(restored?.selected ?? initialDraft?.selectedIds ?? [])
+  const [rules, setRules] = useState<DrawRule[]>(restored?.rules ?? [])
   const [rulesNotice, setRulesNotice] = useState<string | null>(null)
-  const [result, setResult] = useState<DrawResult | null>(null)
-  const [adjustment, setAdjustment] = useState<AdjustmentState | null>(null)
+
+  const [adjustment, setAdjustment] = useState<AdjustmentState | null>(restored?.adjustment ?? null)
   const [error, setError] = useState<string | null>(null)
   const [historyFailed, setHistoryFailed] = useState(false)
-  const [historySummary, setHistorySummary] = useState<string | null>(null)
+  const [historySummary, setHistorySummary] = useState<string | null>(restored?.historySummary ?? null)
   const history = useRef<{ key: string; snapshot: HistoricalSnapshot } | null>(null)
   const historyScope = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -47,24 +49,46 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     return () => { clear(); unsubscribe?.() }
   }, [client, group.id, authorizationVersion])
   const [busy, setBusy] = useState(false)
-  const [runs, setRuns] = useState<DrawResult[]>([])
-  const [drawContext, setDrawContext] = useState('')
-  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>('idle')
-  const [draftChanged, setDraftChanged] = useState(Boolean(initialDraft))
+  const [runs, setRuns] = useState<DrawResult[]>(restored?.runs ?? [])
+  const result = runs.at(-1) ?? null
+  const [drawContext, setDrawContext] = useState(restored?.drawContext ?? '')
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>(restored?.attempt ? 'error' : 'idle')
+  const [draftChanged, setDraftChanged] = useState(Boolean(initialDraft || restored))
   const dirty = draftChanged && saveState !== 'saved'
   useEffect(() => { onDraftChange?.(dirty) }, [dirty, onDraftChange])
-  const attempt = useRef<{ id: string; payload: SaveDrawPayload } | null>(null)
-  const [frozenAttempt, setFrozenAttempt] = useState<{ id: string; payload: SaveDrawPayload } | null>(null)
+  const attempt = useRef<DrawAttempt | null>(restored?.attempt ?? null)
+  const [frozenAttempt, setFrozenAttempt] = useState<DrawAttempt | null>(restored?.attempt ?? null)
+  const [reconciliation, setReconciliation] = useState<'checking' | 'missing' | 'unknown' | 'mismatch' | null>(restored?.attempt ? 'checking' : null)
+  const [lookup, setLookup] = useState(0)
+  const snapshot: MatchDraft = { step, config, details, selected, rules, runs, adjustment, drawContext, historySummary, attempt: frozenAttempt }
+  useDraftAutosave(writer, dirty && !frozenAttempt ? snapshot : null, step === 'details' ? 180 : 0, restored)
   const submitting = useRef(false)
   const drawing = useRef(false)
   const heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { heading.current?.focus() }, [step, error, saveState])
   useEffect(() => {
+    if (writer && saveState !== 'saving') return
     if (!dirty && saveState !== 'saving' && saveState !== 'error') return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [dirty, saveState])
+  }, [dirty, saveState, writer])
+  useEffect(() => {
+    if (!client || !draftUserId || !writer || !frozenAttempt || saveState !== 'error') return
+    let active = true
+    void reconcileAttempt(client, frozenAttempt, draftUserId).then(async outcome => {
+      if (!active) return
+      setReconciliation(outcome === 'saved' ? 'checking' : outcome)
+      if (outcome !== 'saved') return
+      await writer.commit(null)
+      if (!active) return
+      setSaveState('saved'); onAttemptChange?.(false); onSaved?.(frozenAttempt.id)
+    })
+    return () => { active = false }
+  }, [client, draftUserId, writer, frozenAttempt, saveState, authorizationVersion, lookup, onAttemptChange, onSaved])
+  useEffect(() => {
+    if (restored?.attempt) onAttemptChange?.(true)
+  }, [restored, onAttemptChange])
   if (group.role !== 'owner' && group.role !== 'admin') return null
   const eligible = players.filter((player) => player.active && player.group_id === group.id)
   const selectedEligible = selected.filter((id) => eligible.some((p) => p.id === id))
@@ -77,7 +101,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     active: true, created_at: '', updated_at: '',
   })) : eligible
 
-  function invalidate() { setResult(null); setAdjustment(null); setRuns([]); setDrawContext(''); setHistorySummary(null); setHistoryFailed(false) }
+  function invalidate() { setAdjustment(null); setRuns([]); setDrawContext(''); setHistorySummary(null); setHistoryFailed(false) }
   async function confirmDiscard() {
     return !adjustment || !result || sameTeams(adjustment, editableResult(result, config.playersOnCourt)) ||
       await confirm({ title: 'Descartar ajustes da escalação?', message: 'Esta alteração exige um novo sorteio e descarta os ajustes manuais.', action: 'Descartar ajustes e continuar' })
@@ -94,7 +118,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
       invalidate()
       pruneRules(selectedEligible, next.teamCount)
     }
-    setDraftChanged(true); setConfig(next); setError(null); setStep('participants')
+    setDraftChanged(true); setConfig(next); setDetails(detailsInput(next)); setError(null); setStep('participants')
   }
   async function changeRules(next: DrawRule[]) {
     if (drawing.current || locked || !await confirmDiscard()) return false
@@ -145,39 +169,57 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
         const pairs = repeatedPairs(next.teams, historicalWeights(snapshot, new Set(drawInput.players.map(player => player.id))))
         setHistorySummary(`Histórico ativado · ${snapshot.length} partida(s) considerada(s). No sorteio-base, ${pairs.roster} par(es) já jogaram juntos, com ${pairs.starters} repetição(ões) entre titulares.`)
       }
-      setResult(next); setAdjustment(editableResult(next, config.playersOnCourt))
+      setAdjustment(editableResult(next, config.playersOnCourt))
       setRuns((previous) => drawContext === context ? [...previous, next] : [next]); setDrawContext(context)
       setStep('result')
     } catch (cause) { setError(cause instanceof DrawInputError ? cause.message : 'Não foi possível sortear os times. Tente novamente.') } finally { drawing.current = false; setBusy(false) }
   }
   async function save() {
-    if (!client || !result || !adjustment || submitting.current || saveState === 'saved' || (stale && !attempt.current)) return
-    submitting.current = true; setError(null); setSaveState('saving')
+    if (!client || !result || !adjustment || submitting.current || saveState === 'saved'
+      || (stale && !attempt.current) || reconciliation === 'checking' || reconciliation === 'mismatch'
+      || (requireDurable && !writer)) return
+    submitting.current = true; setError(null); setSaveState('saving'); onAttemptChange?.(true)
     try {
-      // Freeze once, before the first network request. A retry uses these exact values.
-      attempt.current ??= { id: crypto.randomUUID(), payload: buildDrawPayload(group.id, config, eligible, runs, adjustment) }
-      setFrozenAttempt(attempt.current)
-      onAttemptChange?.(true)
-      const id = await saveMatchDraw(client, attempt.current.id, attempt.current.payload)
+      const pending = attempt.current ?? { id: crypto.randomUUID(), payload: buildDrawPayload(group.id, config, eligible, runs, adjustment) }
+      // CAS also verifies that no other tab has discarded or completed this attempt.
+      if (writer && !await writer.commit({ ...snapshot, attempt: pending })) {
+        if (!attempt.current) onAttemptChange?.(false)
+        setSaveState(attempt.current ? 'error' : 'idle')
+        setError('Não foi possível guardar a tentativa no dispositivo. Nenhum envio foi iniciado por esta ação.')
+        return
+      }
+      attempt.current = pending
+      setFrozenAttempt(pending)
+      const id = await saveMatchDraw(client, pending.id, pending.payload)
+      await writer?.commit(null)
       setSaveState('saved'); onAttemptChange?.(false); onSaved?.(id)
     } catch {
+      if (!attempt.current) onAttemptChange?.(false)
+      setReconciliation(attempt.current && writer ? 'checking' : null)
       setSaveState(attempt.current ? 'error' : 'idle')
       setError(attempt.current ? 'Não foi possível confirmar o salvamento. A partida pode já ter sido salva. Tente novamente com os mesmos dados; não crie outra cópia.' : 'Não foi possível preparar o salvamento. Confira os dados e tente novamente.')
     } finally { submitting.current = false }
   }
   async function abandon() {
     if (!await confirm({ title: 'Abandonar esta tentativa?', message: 'A partida pode já ter sido salva. Verifique o histórico antes de abandonar: salvar novamente após editar poderá criar outra partida.', action: 'Abandonar e editar', cancel: 'Manter tentativa' })) return
-    attempt.current = null; setFrozenAttempt(null); setSaveState('idle'); setError(null)
+    const editable: MatchDraft = stale ? { ...snapshot, step: 'participants', runs: [], adjustment: null, drawContext: '', historySummary: null, attempt: null } : { ...snapshot, attempt: null }
+    if (writer && !await writer.commit(editable)) return
+    attempt.current = null; setFrozenAttempt(null); setSaveState('idle'); setReconciliation(null); setError(null)
     onAttemptChange?.(false)
     if (stale) { invalidate(); setStep('participants') }
   }
-  return <section className="panel draw-panel" aria-label="Novo jogo" onChange={() => setDraftChanged(true)}>
+  async function discard() {
+    if (!writer || !await confirm({ title: 'Descartar rascunho?', message: 'A edição desta partida será removida deste dispositivo.', action: 'Descartar rascunho' })) return
+    if (await writer.commit(null)) { onDraftChange?.(false); onDiscard?.() }
+  }
+  return <section className="panel draw-panel" aria-label="Novo jogo">
     <ConfirmationDialog {...dialogProps} />
     <div className="game-flow-heading"><div><p className="eyebrow">Novo jogo</p><h2 ref={heading} tabIndex={-1}>{step === 'details' ? 'Configure a partida' : step === 'participants' ? 'Quem vai jogar?' : 'Times sorteados'}</h2></div><p className="game-flow-step" aria-label={`Etapa ${step === 'details' ? 1 : step === 'participants' ? 2 : 3} de 3`}>{step === 'details' ? '1 de 3' : step === 'participants' ? '2 de 3' : '3 de 3'}</p></div>
-    <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'O jogo existe apenas nesta tela até você salvar e aceitar o sorteio.'}</p>
-    {step === 'details' ? <Details initial={config} onContinue={next => void beginGame(next)} /> : null}
+    <p className="game-flow-note">{saveState === 'saved' ? 'Resultado salvo no histórico do grupo.' : saveState === 'saving' || saveState === 'error' ? 'Conclua esta tentativa ou abandone-a antes de sair desta tela. Confira o histórico se a resposta não chegar.' : 'A partida entra no histórico quando você salvar e aceitar o sorteio.'}</p>
+    {step === 'details' ? <Details initial={details} onEdit={next => { setDetails(next); setDraftChanged(true) }} onContinue={next => void beginGame(next)} /> : null}
+    {dirty && saveState === 'idle' && onDiscard && <button className="quiet-action" type="button" disabled={busy} onClick={() => void discard()}>Descartar rascunho</button>}
     {step === 'participants' ? <Participants busy={busy} config={config} error={error} players={eligible} selected={selectedEligible} rules={rules} rulesNotice={rulesNotice} onRulesChange={changeRules} onBack={() => { setError(null); setStep('details') }} onDraw={() => void draw()} onSelectedChange={ids => void changeParticipants(ids)} /> : null}
-    {historyFailed && <div><p className="form-status" role="alert">Não foi possível carregar o histórico. Tente sortear novamente ou desative o histórico para continuar.</p><button type="button" className="quiet-action" disabled={busy || locked} onClick={() => { setConfig({ ...config, avoidRecentRepeats: false }); invalidate(); setStep('participants') }}>Desativar histórico</button></div>}
+    {historyFailed && <div><p className="form-status" role="alert">Não foi possível carregar o histórico. Tente sortear novamente ou desative o histórico para continuar.</p><button type="button" className="quiet-action" disabled={busy || locked} onClick={() => { setConfig({ ...config, avoidRecentRepeats: false }); setDetails({ ...details, avoidRecentRepeats: false }); invalidate(); setStep('participants') }}>Desativar histórico</button></div>}
     {step === 'result' && stale && !locked ? <div role="status"><p>O elenco ou a configuração mudou. Faça um novo sorteio; os sorteios anteriores serão descartados.</p><button className="quiet-action" onClick={() => { invalidate(); setSelected(selectedEligible); setStep('participants') }}>Revisar participantes</button></div> : null}
     {step === 'result' && result && adjustment && (!stale || locked) ? <>
       <fieldset className="result-editing" disabled={busy || locked}><legend className="sr-only">Ajustes da escalação</legend>
@@ -186,30 +228,40 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
       {historySummary && <p role="status">{historySummary}</p>}
       <p>{runs.length} sorteio(s) nesta partida. Somente o último será aceito.</p>
       {error ? <p className="form-status" role="alert">{error}</p> : null}
-      <div className="save-draw-actions">{saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving'} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}</div>
-      {saveState === 'error' ? <button className="quiet-action" type="button" onClick={() => void abandon()}>Abandonar tentativa e editar</button> : null}
+      <div className="save-draw-actions">{saveState === 'saved' ? <p className="adjustment-status" role="status">Partida salva e sorteio aceito. Consulte o resultado final no histórico.</p> : <button className="solid-action" type="button" disabled={!client || busy || saveState === 'saving' || reconciliation === 'checking' || reconciliation === 'mismatch' || (requireDurable && !writer)} onClick={() => void save()}>{saveState === 'saving' ? 'Salvando e aceitando…' : saveState === 'error' ? 'Tentar salvar novamente' : 'Salvar e aceitar sorteio'}</button>}</div>
+      {reconciliation && saveState === 'error' && <p role="status">{{
+        checking: 'Verificando a tentativa no histórico…',
+        missing: 'A partida ainda não apareceu no histórico. Você pode repetir o envio com o mesmo identificador e conteúdo.',
+        unknown: 'Não foi possível verificar a tentativa no histórico. Você pode consultar novamente ou repetir o mesmo envio.',
+        mismatch: 'O histórico contém dados diferentes para este identificador. A tentativa foi bloqueada.',
+      }[reconciliation]}</p>}
+      {writer && reconciliation && reconciliation !== 'checking' && saveState === 'error' && <button className="quiet-action" type="button" onClick={() => { setReconciliation('checking'); setLookup(n => n + 1) }}>Consultar tentativa no histórico</button>}
+      {saveState === 'error' && reconciliation !== 'checking' ? <button className="quiet-action" type="button" onClick={() => void abandon()}>Abandonar tentativa e editar</button> : null}
       {saveState === 'saved' && onSaved && frozenAttempt ? <button className="quiet-action" type="button" onClick={() => onSaved(frozenAttempt.id)}>Ver partida salva</button> : null}
     </> : null}
   </section>
 }
 
-function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (value: GameConfig) => void }) {
-  const [mode, setMode] = useState<DrawMode>(initial.drawMode ?? 'classic')
-  const [avoidRecentRepeats, setAvoidRecentRepeats] = useState(Boolean(initial.avoidRecentRepeats))
+function detailsInput(config: GameConfig): DetailsInput {
+  return { ...config, playersOnCourt: String(config.playersOnCourt) }
+}
+
+function Details({ initial, onEdit, onContinue }: { initial: DetailsInput; onEdit: (value: DetailsInput) => void; onContinue: (value: GameConfig) => void }) {
+  const mode = initial.drawMode ?? 'classic'
+  function read(form: FormData): DetailsInput {
+    return {
+      name: stringValue(form, 'name'), matchDate: stringValue(form, 'matchDate'), matchTime: stringValue(form, 'matchTime'),
+      playersOnCourt: stringValue(form, 'playersOnCourt'), teamCount: Number(form.get('teamCount')),
+      drawMode: stringValue(form, 'drawMode') as DrawMode,
+      ...(form.get('avoidRecentRepeats') === 'on' ? { avoidRecentRepeats: true } : {}),
+    }
+  }
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    onContinue({
-      name: stringValue(form, 'name'),
-      matchDate: stringValue(form, 'matchDate'),
-      matchTime: stringValue(form, 'matchTime'),
-      playersOnCourt: Number(form.get('playersOnCourt')),
-      teamCount: Number(form.get('teamCount')),
-      drawMode: mode,
-      ...(mode !== 'classic' && avoidRecentRepeats ? { avoidRecentRepeats: true } : {}),
-    })
+    const value = read(new FormData(event.currentTarget))
+    onContinue({ ...value, playersOnCourt: Number(value.playersOnCourt) })
   }
-  return <form className="data-form" onSubmit={submit}>
+  return <form className="data-form" onChange={event => onEdit(read(new FormData(event.currentTarget)))} onSubmit={submit}>
     <label><span className="field-label">Nome <span>(opcional)</span></span><input name="name" defaultValue={initial.name} minLength={2} maxLength={80} placeholder="Ex.: Futebol de quinta" /></label>
     <div className="form-grid">
       <label>Data<input name="matchDate" type="date" defaultValue={initial.matchDate} required /></label>
@@ -220,13 +272,13 @@ function Details({ initial, onContinue }: { initial: GameConfig; onContinue: (va
       <label>Em quadra por time<input name="playersOnCourt" type="number" min="1" max="20" defaultValue={initial.playersOnCourt} required /></label>
     </div>
     <label>Modo de sorteio
-      <select value={mode} aria-describedby="draw-mode-description" onChange={event => setMode(event.target.value as DrawMode)}>
+      <select name="drawMode" defaultValue={mode} aria-describedby="draw-mode-description">
         {Object.entries(DRAW_MODES).map(([value, option]) => <option key={value} value={value}>{option.label}</option>)}
       </select>
     </label>
     <p id="draw-mode-description" className="game-flow-note">{DRAW_MODES[mode].description}</p>
     {mode !== 'classic' && <div>
-      <label className="draw-player-option"><input type="checkbox" checked={avoidRecentRepeats} aria-describedby="draw-history-description" onChange={event => setAvoidRecentRepeats(event.target.checked)} />Evitar repetições recentes</label>
+      <label className="draw-player-option"><input type="checkbox" name="avoidRecentRepeats" defaultChecked={Boolean(initial.avoidRecentRepeats)} aria-describedby="draw-history-description" />Evitar repetições recentes</label>
       <p className="game-flow-note" id="draw-history-description">Considera até 10 partidas do grupo para variar as duplas. As regras obrigatórias e o equilíbrio dos times continuam prioritários.</p>
     </div>}
     <button className="solid-action" type="submit">Selecionar participantes</button>

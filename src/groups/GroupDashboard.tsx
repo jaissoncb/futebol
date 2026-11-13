@@ -1,3 +1,7 @@
+import { DraftReadError, DraftStatusMessage } from '../drafts/DraftStatus'
+import { isPlayerDraft, type PlayerDraft } from '../drafts/models'
+import { draftScope, type DraftAccess, type DraftScope } from '../drafts/store'
+import { useDraftAutosave, useDraftRecord, type DraftWriter } from '../drafts/use-draft'
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
@@ -27,6 +31,8 @@ interface GroupDashboardProps {
   userId: string
   onAttemptChange?: (pending: boolean) => void
   verifiedData?: GroupWorkspaceData
+  drafts?: DraftAccess | null
+  onGroupsChanged?: () => void
 }
 
 const EMPTY_GROUP: GroupInput = { defaultPlayersOnCourt: 5, name: '', sport: 'futsal' }
@@ -53,7 +59,7 @@ export function GroupDashboard(props: GroupDashboardProps) {
   return <GroupDashboardContent key={props.userId} {...props} />
 }
 
-function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }: GroupDashboardProps) {
+function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, drafts, onGroupsChanged }: GroupDashboardProps) {
   const { confirm, dialogProps } = useConfirmation()
   const sectionPrefix = useId()
   const [playerSearch, setPlayerSearch] = useState({ groupId: '', query: '' })
@@ -67,6 +73,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
   const [editingPlayer, setEditingPlayer] = useState<Player | 'new' | null>(null)
   const [matchAttemptPending, setMatchAttemptPending] = useState(false)
   const [matchDraftDirty, setMatchDraftDirty] = useState(false)
+  const [playerDraftDirty, setPlayerDraftDirty] = useState(false)
   const [formPending, setFormPending] = useState(false)
   const [authorization, setAuthorization] = useState<{ data?: GroupWorkspaceData; version: number }>({ version: 0 })
   if (verifiedData && authorization.data !== verifiedData) {
@@ -78,6 +85,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
     if (selectedGroupId && !verifiedData.groups.some(group => group.id === selectedGroupId)) {
       setSelectedGroupId(verifiedData.groups[0]?.id ?? null)
       setEditingPlayer(null)
+      setPlayerDraftDirty(false)
       setShowSettings(false)
       setMatchAttemptPending(false)
       setMatchDraftDirty(false)
@@ -86,6 +94,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
       const currentRole = verifiedData.groups.find(group => group.id === selectedGroupId)?.role
       if (currentRole === 'member' && previousRole !== 'member') {
         setEditingPlayer(null)
+        setPlayerDraftDirty(false)
         setMatchAttemptPending(false)
         setMatchDraftDirty(false)
       }
@@ -93,7 +102,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
     }
   }
   const navigationLocked = matchAttemptPending || formPending
-  useEffect(() => { onAttemptChange?.(navigationLocked || matchDraftDirty) }, [navigationLocked, matchDraftDirty, onAttemptChange])
+  useEffect(() => { onAttemptChange?.(navigationLocked || matchDraftDirty || playerDraftDirty) }, [navigationLocked, matchDraftDirty, playerDraftDirty, onAttemptChange])
   useEffect(() => {
     if (!loading && !error && (selectedGroupId || !verifiedData?.groups.length)) rememberSelectedGroup(userId, selectedGroupId)
   }, [userId, selectedGroupId, loading, error, verifiedData])
@@ -122,7 +131,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
       // Creating a group can also request a switch. Cancelling keeps the draft
       // and still refreshes the roster/groups after the successful creation.
       const switchGroup = preferredGroupId && preferredGroupId !== selectedGroupId
-      const preferred = switchGroup && matchDraftDirty
+      const preferred = switchGroup && matchDraftDirty && drafts === undefined
         && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })
         ? undefined : preferredGroupId
       const data = await loadGroupWorkspace(client)
@@ -138,7 +147,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
     } finally {
       setLoading(false)
     }
-  }, [client, userId, selectedGroupId, matchDraftDirty, confirm])
+  }, [client, userId, selectedGroupId, matchDraftDirty, confirm, drafts])
 
   useEffect(() => {
     if (verifiedData) return
@@ -178,6 +187,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
     [players, selectedGroupId],
   )
   const canManagePlayers = selectedGroup?.role === 'owner' || selectedGroup?.role === 'admin'
+  const scope = selectedGroup && canManagePlayers ? draftScope(drafts, selectedGroup.id) : null
   const currentPlayer = editingPlayer === 'new' ? editingPlayer : selectedPlayers.find(player => player.id === editingPlayer?.id)
   const query = playerSearch.groupId === selectedGroupId ? playerSearch.query : ''
   const visiblePlayers = searchPlayers(selectedPlayers, query)
@@ -215,7 +225,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
             initialValue={EMPTY_GROUP}
             onBusyChange={setFormPending}
             onCancel={() => setShowGroupForm(false)}
-            onSaved={async (groupId) => { setShowGroupForm(false); await refresh(groupId) }}
+            onSaved={async (groupId) => { setShowGroupForm(false); await refresh(groupId); onGroupsChanged?.() }}
           />
         ) : (
           <button className="solid-action" type="button" onClick={() => setShowGroupForm(true)}>Criar grupo</button>
@@ -247,7 +257,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
             initialValue={EMPTY_GROUP}
             onBusyChange={setFormPending}
             onCancel={() => setShowGroupForm(false)}
-            onSaved={async (groupId) => { setShowGroupForm(false); await refresh(groupId) }}
+            onSaved={async (groupId) => { setShowGroupForm(false); await refresh(groupId); onGroupsChanged?.() }}
           />
         </section>
       ) : null}
@@ -255,7 +265,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
       <GroupSwitcher groups={groups} selectedId={selectedGroupId} disabled={navigationLocked}
         onSelect={id => { void (async () => {
           if (id === selectedGroupId || navigationLocked) return
-          if (matchDraftDirty && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })) return
+          if (drafts === undefined && matchDraftDirty && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })) return
           setMatchDraftDirty(false); setSelectedGroupId(id); setEditingPlayer(null); setShowSettings(false)
         })() }} />
 
@@ -298,7 +308,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
             <button type="button" aria-controls={`${sectionPrefix}-history`} onClick={() => goTo('history')}>Histórico</button>
           </nav>
           <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status">Carregando partidas…</p>}>
-            <MatchWorkspace key={`${selectedGroup.id}:${canManagePlayers}`} client={client} group={selectedGroup} players={selectedPlayers} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} authorizationVersion={authorization.version} />
+            <MatchWorkspace key={`${selectedGroup.id}:${canManagePlayers}:${scope?.grant ?? ""}`} client={client} group={selectedGroup} players={selectedPlayers} scope={scope} requireDurable={drafts !== undefined} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} authorizationVersion={authorization.version} />
           </Suspense></MatchModuleBoundary>
 
           <section className="players-section" id={`${sectionPrefix}-players`} tabIndex={-1} aria-label="Elenco do grupo">
@@ -313,16 +323,18 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData }
             </div>
             {selectedPlayers.length ? <label className="search-field">Buscar no elenco<input type="search" placeholder="Nome ou apelido" maxLength={80} value={query} onChange={event => setPlayerSearch({ groupId: selectedGroup.id, query: event.target.value })} /></label> : null}
 
-            {currentPlayer && canManagePlayers ? (
-              <section className="panel compact-panel" aria-label={currentPlayer === 'new' ? 'Novo jogador' : 'Editar jogador'}>
-                <PlayerForm
-                  key={currentPlayer === 'new' ? 'new' : currentPlayer.id}
-                  client={client}
-                  groupId={selectedGroup.id}
-                  initialValue={currentPlayer === 'new' ? EMPTY_PLAYER : playerToInput(currentPlayer)}
-                  playerId={currentPlayer === 'new' ? undefined : currentPlayer.id}
-                  onBusyChange={setFormPending}
-                  onCancel={() => setEditingPlayer(null)}
+            {canManagePlayers && (scope || currentPlayer === 'new') ? <NewPlayerDraft
+              key={scope?.grant ?? selectedGroup.id} scope={scope} client={client} groupId={selectedGroup.id}
+              open={currentPlayer === 'new'} hidden={Boolean(currentPlayer && currentPlayer !== 'new')}
+              onDirty={setPlayerDraftDirty} onBusyChange={setFormPending}
+              onClose={() => setEditingPlayer(null)}
+              onSaved={async () => { setEditingPlayer(null); await refresh(selectedGroup.id) }}
+            /> : null}
+            {currentPlayer && currentPlayer !== 'new' && canManagePlayers ? (
+              <section className="panel compact-panel" aria-label="Editar jogador">
+                <PlayerForm key={currentPlayer.id} client={client} groupId={selectedGroup.id}
+                  initialValue={playerToInput(currentPlayer)} playerId={currentPlayer.id}
+                  onBusyChange={setFormPending} onCancel={() => setEditingPlayer(null)}
                   onSaved={async () => { setEditingPlayer(null); await refresh(selectedGroup.id) }}
                 />
               </section>
@@ -409,10 +421,78 @@ function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled 
   )
 }
 
-function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved, onBusyChange }: {
+function NewPlayerDraft({ scope, client, groupId, open, hidden, onDirty, onBusyChange, onClose, onSaved }: {
+  scope: DraftScope | null; client: FutebolDataClient | null; groupId: string; open: boolean; hidden: boolean
+  onDirty: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; onClose: () => void; onSaved: () => Promise<void>
+}) {
+  const { record, status, reload, discardCorrupt } = useDraftRecord(scope, 'player', isPlayerDraft)
+  const [created, setCreated] = useState(false)
+  const [review, setReview] = useState<Player[] | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState(false)
+  const [resumed, setResumed] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) { setWasOpen(open); if (open) setDismissed(false) }
+  const visible = created || open || (record.state === 'ready' && record.initial && !dismissed)
+  useEffect(() => () => onDirty(false), [onDirty])
+  if (record.state === 'error') return <DraftReadError issue={record.issue} onRetry={reload} onDiscard={() => void discardCorrupt()} />
+  if (!visible) return null
+  if (record.state === 'loading') return <p role="status">Abrindo rascunho de jogador…</p>
+  const writer = record.writer
+  async function clear() {
+    if (writer && !await writer.commit(null)) return false
+    setCreated(false); setReview(null); setResumed(false); setDismissed(true); onDirty(false)
+    if (writer) reload()
+    return true
+  }
+  async function checkRoster() {
+    if (!client || reviewBusy) return
+    setReviewBusy(true); setReviewError(false)
+    try {
+      const workspace = await loadGroupWorkspace(client)
+      if (!workspace.groups.some(group => group.id === groupId && (group.role === 'owner' || group.role === 'admin'))) {
+        setReviewError(true)
+        return
+      }
+      setReview(workspace.players.filter(player => player.group_id === groupId))
+    } catch { setReviewError(true) }
+    finally { setReviewBusy(false) }
+  }
+  const needsReview = record.initial?.submitted && !resumed
+  return <section className="panel compact-panel" aria-label="Novo jogador" hidden={hidden}>
+    {created ? <p role="alert">Jogador cadastrado. Não foi possível limpar o rascunho deste dispositivo.</p> : null}
+    <DraftStatusMessage status={status} onReload={created || needsReview ? undefined : reload} />
+    {created ? <button type="button" onClick={() => void clear().then(cleared => { if (cleared) onClose() })}>Tentar limpar rascunho</button>
+      : needsReview ? <div>
+        <p role="alert">O cadastro de {record.initial?.name} pode já ter sido enviado. Confira o elenco do grupo antes de continuar.</p>
+        <button type="button" disabled={reviewBusy} onClick={() => void checkRoster()}>Conferir elenco atualizado</button>
+        {reviewError && <p role="alert">Não foi possível confirmar o elenco autorizado. Tente novamente.</p>}
+        {review && <>
+          <ul aria-label="Elenco atualizado">{review.map(player => <li key={player.id}>
+            {player.name}{player.nickname ? ' · ' + player.nickname : ''} · Nível {player.skill_rating}{player.active ? '' : ' · Inativo'}
+          </li>)}</ul>
+          {review.length === 0 && <p>O grupo ainda não tem jogadores.</p>}
+          <button type="button" onClick={() => void clear().then(cleared => { if (cleared) onClose() })}>Descartar cadastro recuperado</button>
+          <button type="button" onClick={() => setResumed(true)}>Conferi o elenco e quero continuar o cadastro</button>
+        </>}
+      </div> :
+    <PlayerForm client={client} groupId={groupId} initialValue={record.initial ?? EMPTY_PLAYER} writer={writer}
+      onDirty={onDirty} onBusyChange={onBusyChange}
+      onCancel={() => void clear().then(cleared => { if (cleared) onClose() })}
+      onSaved={async () => {
+        if (!await clear()) setCreated(true)
+        await onSaved()
+      }} />}
+  </section>
+}
+
+function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, onCancel, onSaved, onBusyChange }: {
   client: FutebolDataClient | null
   groupId: string
-  initialValue: PlayerInput
+  initialValue: PlayerDraft
+  writer?: DraftWriter<PlayerDraft>
+  onDirty?: (dirty: boolean) => void
   playerId?: string
   onCancel: () => void
   onSaved: () => Promise<void>
@@ -420,29 +500,28 @@ function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [draft, setDraft] = useState<PlayerDraft | null>(null)
+  const [saved, setSaved] = useState(false)
+  useDraftAutosave(writer, draft, 180)
   const submitting = useRef(false)
   const status = useRef<HTMLParagraphElement>(null)
   useEffect(() => { if (error) status.current?.focus() }, [error])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (submitting.current) return
+    if (submitting.current || saved) return
     if (!client) return setError('A conexão com o Futebol não está configurada neste ambiente.')
     submitting.current = true; setBusy(true); onBusyChange(true)
     setError(null)
-    const form = new FormData(event.currentTarget)
-    const position = readString(form, 'preferredPosition')
-    const input: PlayerInput = {
-      active: form.get('active') === 'on',
-      isGoalkeeper: form.get('isGoalkeeper') === 'on',
-      name: readString(form, 'name'),
-      nickname: readString(form, 'nickname'),
-      preferredPosition: position ? position as PreferredPosition : null,
-      skillRating: Number(form.get('skillRating')),
-    }
+    const input = playerFormInput(event.currentTarget)
     try {
+      if (writer && !await writer.commit({ ...input, submitted: true })) {
+        setError('Não foi possível guardar a versão atual do formulário. O cadastro não foi enviado.')
+        return
+      }
       if (playerId) await updatePlayer(client, playerId, input)
       else await createPlayer(client, groupId, input)
+      setSaved(true)
       await onSaved()
     } catch {
       setError('Não foi possível salvar o jogador. Confira os dados e tente novamente.')
@@ -452,7 +531,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved
   }
 
   return (
-    <form className="data-form" aria-busy={busy} onSubmit={(event) => void handleSubmit(event)}><fieldset className="form-fields" disabled={busy}>
+    <form className="data-form" aria-busy={busy} onChange={event => { if (writer) { setDraft({ ...playerFormInput(event.currentTarget), ...(initialValue.submitted && { submitted: true }) }); onDirty?.(true) } }} onSubmit={(event) => void handleSubmit(event)}><fieldset className="form-fields" disabled={busy || saved}>
       <div className="form-heading"><h2>{playerId ? 'Editar jogador' : 'Novo jogador'}</h2><button type="button" className="close-action" aria-label="Fechar" disabled={busy} onClick={onCancel}>×</button></div>
       <label>Nome<input name="name" defaultValue={initialValue.name} minLength={2} maxLength={80} required autoFocus /></label>
       <label><span className="field-label">Apelido <span>(opcional)</span></span><input name="nickname" defaultValue={initialValue.nickname ?? ''} maxLength={40} /></label>
@@ -465,9 +544,22 @@ function PlayerForm({ client, groupId, initialValue, playerId, onCancel, onSaved
         <label><input type="checkbox" name="active" defaultChecked={initialValue.active} /> Jogador ativo</label>
       </div>
       {error ? <p ref={status} tabIndex={-1} className="form-status" role="alert">{error}</p> : null}
-      <button className="solid-action" type="submit" disabled={busy}>{busy ? 'Salvando…' : 'Salvar jogador'}</button>
+      <button className="solid-action" type="submit" disabled={busy || saved}>{saved ? 'Jogador salvo' : busy ? 'Salvando…' : 'Salvar jogador'}</button>
     </fieldset></form>
   )
+}
+
+function playerFormInput(formElement: HTMLFormElement): PlayerInput {
+  const form = new FormData(formElement)
+  const position = readString(form, 'preferredPosition')
+  return {
+    active: form.get('active') === 'on',
+    isGoalkeeper: form.get('isGoalkeeper') === 'on',
+    name: readString(form, 'name'),
+    nickname: readString(form, 'nickname'),
+    preferredPosition: position ? position as PreferredPosition : null,
+    skillRating: Number(form.get('skillRating')),
+  }
 }
 
 function playerToInput(player: Player): PlayerInput {
