@@ -1,3 +1,5 @@
+import { DraftStatusMessage } from '../drafts/DraftStatus'
+import type { DraftAccess, DraftIssue } from '../drafts/store'
 import { useState, type ReactNode } from 'react'
 import { GroupDashboard } from '../groups/GroupDashboard'
 import { PwaUpdate } from '../PwaUpdate'
@@ -7,20 +9,18 @@ import { ConfirmationSuspended, useConfirmation } from '../useConfirmation'
 import type { FutebolApiServices } from '../lib/api/services'
 import type { GroupWorkspaceData } from '../groups/group-service'
 
-export function FutebolWorkspace({ services, internalId, data, suspended, sessionActions, onLogout, onReenter, loggingOut, environment }: {
+export function FutebolWorkspace({ services, internalId, data, drafts, draftIssue, suspended, sessionActions, onLogout, onReenter, loggingOut, environment, onGroupsChanged }: {
   services: FutebolApiServices; internalId: string; onLogout: () => Promise<void>; loggingOut: boolean
   onReenter?: () => Promise<void>
+  onGroupsChanged?: () => void
+  drafts?: DraftAccess | null; draftIssue?: DraftIssue
   data: GroupWorkspaceData; suspended: boolean; sessionActions: ReactNode; environment: 'dev' | 'prd'
 }) {
   const [pending, setPending] = useState(false)
   const { confirm, dialogProps } = useConfirmation()
   async function logout() {
-    if (pending && !await confirm({ title: 'Sair sem salvar?', message: 'Sua partida tem alterações não salvas. Ao sair, este rascunho será descartado.', action: 'Descartar e sair' })) return
+    if (pending && !await confirm({ title: 'Sair sem salvar?', message: 'Sair apaga os rascunhos deste dispositivo. Uma partida enviada ainda pode aparecer no histórico.', action: 'Descartar e sair' })) return
     await onLogout()
-  }
-  async function reenter() {
-    if (pending && !await confirm({ title: 'Entrar novamente?', message: 'Entrar com o Sabará ID recarrega a página e descarta o rascunho desta sessão.', action: 'Descartar e entrar' })) return
-    await onReenter?.()
   }
   return <div className="app-shell">
     <ConfirmationDialog {...dialogProps} />
@@ -30,10 +30,11 @@ export function FutebolWorkspace({ services, internalId, data, suspended, sessio
     </header>
     <main className="main-content"><PwaUpdate pending={pending || suspended} />
       {sessionActions}
-      {onReenter ? <button className="secondary-action" disabled={loggingOut} onClick={() => void reenter()}>Entrar novamente com Sabará ID</button> : null}
+      {onReenter ? <button className="secondary-action" disabled={loggingOut} onClick={() => void onReenter()}>Entrar novamente com Sabará ID</button> : null}
       <div hidden={suspended} inert={suspended}>
         <ConfirmationSuspended.Provider value={suspended}>
-          <GroupDashboard key={internalId} client={services} userId={internalId} onAttemptChange={setPending} verifiedData={data} />
+          {draftIssue && <DraftStatusMessage status={draftIssue} />}
+          <GroupDashboard drafts={drafts} key={internalId} client={services} userId={internalId} onAttemptChange={setPending} verifiedData={data} onGroupsChanged={onGroupsChanged} />
         </ConfirmationSuspended.Provider>
       </div>
     </main>

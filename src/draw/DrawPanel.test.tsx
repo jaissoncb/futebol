@@ -52,7 +52,7 @@ describe('fluxo de jogo das Fases 5 e 6', () => {
     expect(screen.getByText('14 jogadores selecionados')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Voltar' }))
     expect(screen.getByRole('heading', { name: 'Configure a partida' })).toBeInTheDocument()
-    expect(screen.getByText(/existe apenas nesta tela/)).toBeInTheDocument()
+    expect(screen.getByText(/entra no histórico quando você salvar/)).toBeInTheDocument()
   })
 
   it('mostra estado vazio e trata falha de aleatoriedade sem detalhe técnico', async () => {

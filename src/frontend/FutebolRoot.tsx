@@ -1,3 +1,4 @@
+import { invalidateDrafts, isDraftLogout } from '../drafts/store'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react'
 import { KindeProvider, useKindeAuth } from '@kinde-oss/kinde-auth-react'
 import { HashRouter, Link, Route, Routes } from 'react-router-dom'
@@ -25,15 +26,13 @@ export function FutebolRoot({ config, session, initialFailed = false }: {
   const channelName = `futebol-${config.environment}-session`
   useLayoutEffect(() => {
     // Register before the SDK bootstrap can delay mounting its children.
-    if (typeof BroadcastChannel === 'undefined') return
-    const channel = new BroadcastChannel(channelName)
-    channel.onmessage = (event: MessageEvent<unknown>) => {
-      if (event.data !== 'logout') return
-      clearSelectedGroup()
-      controller.end()
-    }
-    return () => channel.close()
-  }, [controller, channelName])
+    const end = () => { clearSelectedGroup(); controller.end() }
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
+    if (channel) channel.onmessage = (event: MessageEvent<unknown>) => { if (event.data === 'logout') end() }
+    const storage = (event: StorageEvent) => { if (isDraftLogout(event, config.environment)) end() }
+    window.addEventListener('storage', storage)
+    return () => { channel?.close(); window.removeEventListener('storage', storage) }
+  }, [controller, channelName, config.environment])
   const callbacks = useMemo<Callbacks>(() => ({
     onSuccess: (_user, state) => {
       controller.sdkSuccess()
@@ -102,7 +101,12 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
     controller.end()
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
     channel?.postMessage('logout'); channel?.close()
-    try { await auth.logout() }
+    try {
+      await invalidateDrafts(config.environment).catch(() => {
+        setStatus('A sessão local foi encerrada. Não foi possível confirmar a remoção dos rascunhos deste dispositivo.')
+      })
+      await auth.logout()
+    }
     catch { setStatus('A sessão local foi encerrada. Tente sair novamente do Sabará ID.') }
     finally { logoutLockRef.current = false; setBusy(false) }
   }
@@ -125,7 +129,7 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
   </section> : null
 
   const home = workspace ? <FutebolWorkspace services={workspace.services} internalId={workspace.internalId}
-    data={workspace.data} suspended={phase !== 'ready'} sessionActions={actions}
+    data={workspace.data} drafts={workspace.drafts} draftIssue={workspace.draftIssue} suspended={phase !== 'ready'} sessionActions={actions} onGroupsChanged={() => controller.foreground()}
     onReenter={canReenter ? () => login() : undefined}
     onLogout={logout} loggingOut={busy} environment={config.environment} />
     : <div className="app-shell">
