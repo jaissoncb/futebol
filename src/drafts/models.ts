@@ -55,8 +55,11 @@ function nullableText(value: unknown, limit: number) { return value === null || 
 function position(value: unknown): value is PlayerInput['preferredPosition'] { return value === null || (typeof value === 'string' && POSITION.includes(value)) }
 function skill(value: unknown) { return number(value, 1, 5) && Number.isInteger(value * 2) }
 
-export function isPlayerDraft(value: unknown): value is PlayerInput {
-  return fields(value, ['active', 'isGoalkeeper', 'name', 'nickname', 'preferredPosition', 'skillRating'])
+export type PlayerDraft = PlayerInput & { submitted?: true }
+
+export function isPlayerDraft(value: unknown): value is PlayerDraft {
+  return fields(value, ['active', 'isGoalkeeper', 'name', 'nickname', 'preferredPosition', 'skillRating'], ['submitted'])
+    && (value.submitted === undefined || value.submitted === true)
     && typeof value.active === 'boolean' && typeof value.isGoalkeeper === 'boolean'
     && text(value.name, 80) && nullableText(value.nickname, 40) && position(value.preferredPosition) && skill(value.skillRating)
 }

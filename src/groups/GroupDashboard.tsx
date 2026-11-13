@@ -1,5 +1,5 @@
 import { DraftReadError, DraftStatusMessage } from '../drafts/DraftStatus'
-import { isPlayerDraft } from '../drafts/models'
+import { isPlayerDraft, type PlayerDraft } from '../drafts/models'
 import { draftScope, type DraftAccess, type DraftScope } from '../drafts/store'
 import { useDraftAutosave, useDraftRecord, type DraftWriter } from '../drafts/use-draft'
 import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
@@ -426,10 +426,15 @@ function NewPlayerDraft({ scope, client, groupId, open, hidden, onDirty, onBusyC
   onDirty: (dirty: boolean) => void; onBusyChange: (busy: boolean) => void; onClose: () => void; onSaved: () => Promise<void>
 }) {
   const { record, status, reload, discardCorrupt } = useDraftRecord(scope, 'player', isPlayerDraft)
+  const [created, setCreated] = useState(false)
+  const [review, setReview] = useState<Player[] | null>(null)
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState(false)
+  const [resumed, setResumed] = useState(false)
   const [dismissed, setDismissed] = useState(false)
   const [wasOpen, setWasOpen] = useState(open)
   if (open !== wasOpen) { setWasOpen(open); if (open) setDismissed(false) }
-  const visible = open || (record.state === 'ready' && record.initial && !dismissed)
+  const visible = created || open || (record.state === 'ready' && record.initial && !dismissed)
   useEffect(() => () => onDirty(false), [onDirty])
   if (record.state === 'error') return <DraftReadError issue={record.issue} onRetry={reload} onDiscard={() => void discardCorrupt()} />
   if (!visible) return null
@@ -437,28 +442,56 @@ function NewPlayerDraft({ scope, client, groupId, open, hidden, onDirty, onBusyC
   const writer = record.writer
   async function clear() {
     if (writer && !await writer.commit(null)) return false
-    setDismissed(true); onDirty(false)
+    setCreated(false); setReview(null); setResumed(false); setDismissed(true); onDirty(false)
     if (writer) reload()
     return true
   }
+  async function checkRoster() {
+    if (!client || reviewBusy) return
+    setReviewBusy(true); setReviewError(false)
+    try {
+      const workspace = await loadGroupWorkspace(client)
+      if (!workspace.groups.some(group => group.id === groupId && (group.role === 'owner' || group.role === 'admin'))) {
+        setReviewError(true)
+        return
+      }
+      setReview(workspace.players.filter(player => player.group_id === groupId))
+    } catch { setReviewError(true) }
+    finally { setReviewBusy(false) }
+  }
+  const needsReview = record.initial?.submitted && !resumed
   return <section className="panel compact-panel" aria-label="Novo jogador" hidden={hidden}>
-    <DraftStatusMessage status={status} onReload={reload} />
+    {created ? <p role="alert">Jogador cadastrado. Não foi possível limpar o rascunho deste dispositivo.</p> : null}
+    <DraftStatusMessage status={status} onReload={created || needsReview ? undefined : reload} />
+    {created ? <button type="button" onClick={() => void clear().then(cleared => { if (cleared) onClose() })}>Tentar limpar rascunho</button>
+      : needsReview ? <div>
+        <p role="alert">O cadastro de {record.initial?.name} pode já ter sido enviado. Confira o elenco do grupo antes de continuar.</p>
+        <button type="button" disabled={reviewBusy} onClick={() => void checkRoster()}>Conferir elenco atualizado</button>
+        {reviewError && <p role="alert">Não foi possível confirmar o elenco autorizado. Tente novamente.</p>}
+        {review && <>
+          <ul aria-label="Elenco atualizado">{review.map(player => <li key={player.id}>
+            {player.name}{player.nickname ? ' · ' + player.nickname : ''} · Nível {player.skill_rating}{player.active ? '' : ' · Inativo'}
+          </li>)}</ul>
+          {review.length === 0 && <p>O grupo ainda não tem jogadores.</p>}
+          <button type="button" onClick={() => void clear().then(cleared => { if (cleared) onClose() })}>Descartar cadastro recuperado</button>
+          <button type="button" onClick={() => setResumed(true)}>Conferi o elenco e quero continuar o cadastro</button>
+        </>}
+      </div> :
     <PlayerForm client={client} groupId={groupId} initialValue={record.initial ?? EMPTY_PLAYER} writer={writer}
       onDirty={onDirty} onBusyChange={onBusyChange}
       onCancel={() => void clear().then(cleared => { if (cleared) onClose() })}
       onSaved={async () => {
-        // The player already exists even if cleanup fails. Never leave an enabled resubmit button.
-        await clear()
+        if (!await clear()) setCreated(true)
         await onSaved()
-      }} />
+      }} />}
   </section>
 }
 
 function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, onCancel, onSaved, onBusyChange }: {
   client: FutebolDataClient | null
   groupId: string
-  initialValue: PlayerInput
-  writer?: DraftWriter<PlayerInput>
+  initialValue: PlayerDraft
+  writer?: DraftWriter<PlayerDraft>
   onDirty?: (dirty: boolean) => void
   playerId?: string
   onCancel: () => void
@@ -467,7 +500,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, 
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [draft, setDraft] = useState<PlayerInput | null>(null)
+  const [draft, setDraft] = useState<PlayerDraft | null>(null)
   const [saved, setSaved] = useState(false)
   useDraftAutosave(writer, draft, 180)
   const submitting = useRef(false)
@@ -482,7 +515,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, 
     setError(null)
     const input = playerFormInput(event.currentTarget)
     try {
-      if (writer && !await writer.commit(input)) {
+      if (writer && !await writer.commit({ ...input, submitted: true })) {
         setError('Não foi possível guardar a versão atual do formulário. O cadastro não foi enviado.')
         return
       }
@@ -498,7 +531,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, 
   }
 
   return (
-    <form className="data-form" aria-busy={busy} onChange={event => { if (writer) { setDraft(playerFormInput(event.currentTarget)); onDirty?.(true) } }} onSubmit={(event) => void handleSubmit(event)}><fieldset className="form-fields" disabled={busy || saved}>
+    <form className="data-form" aria-busy={busy} onChange={event => { if (writer) { setDraft({ ...playerFormInput(event.currentTarget), ...(initialValue.submitted && { submitted: true }) }); onDirty?.(true) } }} onSubmit={(event) => void handleSubmit(event)}><fieldset className="form-fields" disabled={busy || saved}>
       <div className="form-heading"><h2>{playerId ? 'Editar jogador' : 'Novo jogador'}</h2><button type="button" className="close-action" aria-label="Fechar" disabled={busy} onClick={onCancel}>×</button></div>
       <label>Nome<input name="name" defaultValue={initialValue.name} minLength={2} maxLength={80} required autoFocus /></label>
       <label><span className="field-label">Apelido <span>(opcional)</span></span><input name="nickname" defaultValue={initialValue.nickname ?? ''} maxLength={40} /></label>

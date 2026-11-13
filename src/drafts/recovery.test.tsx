@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb'
+import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb'
 import { GroupDashboard } from '../groups/GroupDashboard'
 import { MatchWorkspace } from '../matches/MatchWorkspace'
 import { group, players } from '../matches/test-fixtures'
@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.stubGlobal('indexedDB', new IDBFactory())
   vi.stubGlobal('IDBKeyRange', IDBKeyRange)
 })
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 async function fixture() {
   const data = { groups: [group], players }
@@ -104,9 +104,12 @@ it('reabre cadastro parcial com valores exatos e nenhum POST', async () => {
   const view = mount()
   await action.click(await screen.findByRole('button', { name: 'Adicionar' }))
   const form = () => within(screen.getByRole('region', { name: 'Novo jogador' }))
-  await action.type(form().getByRole('textbox', { name: 'Nome' }), 'Cadastro parcial')
+  await action.type(await within(await screen.findByRole('region', { name: 'Novo jogador' })).findByRole('textbox', { name: 'Nome' }), 'Cadastro parcial')
   await action.click(form().getByLabelText(/É goleiro/))
-  await form().findByText('Rascunho guardado neste dispositivo.')
+  await waitFor(async () => {
+    expect((await readDraft(f.scope, 'player', isPlayerDraft)).value).toMatchObject({ name: 'Cadastro parcial', isGoalkeeper: true })
+    expect(form().getByText('Rascunho guardado neste dispositivo.')).toBeVisible()
+  })
   view.unmount()
   mount()
   await screen.findByRole('region', { name: 'Novo jogador' })
@@ -179,4 +182,61 @@ it('informa falha local e bloqueia PUT quando a tentativa não pode ser persisti
   await screen.findByText(/armazenamento local está indisponível/)
   expect(screen.queryByText('Rascunho guardado neste dispositivo.')).toBeNull()
   expect(f.put).not.toHaveBeenCalled()
+})
+
+it.each([false, true])('cria o jogador uma vez e protege a reabertura quando a limpeza falha (%s)', async failCleanup => {
+  const f = await fixture()
+  const action = user()
+  const inputName = 'Pessoa de teste'
+  const roster = { ...f.data, players: [...players, { ...players[0]!, id: crypto.randomUUID(), name: inputName }] }
+  const workspace = vi.fn().mockResolvedValue(roster)
+  const createPlayer = vi.fn(async () => {
+    const record = await readDraft(f.scope, 'player', isPlayerDraft)
+    expect(record.value).toMatchObject({ name: inputName, submitted: true })
+    if (failCleanup) {
+      const original = Object.getOwnPropertyDescriptor(IDBObjectStore.prototype, 'put')?.value as IDBObjectStore['put']
+      vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, value: unknown, key) {
+        if (this.name === 'drafts' && (value as { value?: unknown }).value === null) {
+          throw new DOMException('fixture', 'QuotaExceededError')
+        }
+        return original.call(this, value, key)
+      })
+    }
+  })
+  const client = { ...f.client, createPlayer, workspace }
+  const mount = () => render(<GroupDashboard client={client} userId={userId} verifiedData={f.data} drafts={f.drafts} />)
+  const view = mount()
+  await action.click(await screen.findByRole('button', { name: 'Adicionar' }))
+  const form = () => within(screen.getByRole('region', { name: 'Novo jogador' }))
+  await action.type(await within(await screen.findByRole('region', { name: 'Novo jogador' })).findByRole('textbox', { name: 'Nome' }), inputName)
+  await action.click(form().getByRole('button', { name: 'Salvar jogador' }))
+  if (failCleanup) {
+    await screen.findByText(/Jogador cadastrado. Não foi possível limpar/)
+    expect(screen.queryByRole('button', { name: 'Salvar jogador' })).toBeNull()
+    expect((await readDraft(f.scope, 'player', isPlayerDraft)).value).toMatchObject({ submitted: true })
+  } else {
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Novo jogador' })).toBeNull())
+    expect((await readDraft(f.scope, 'player', isPlayerDraft)).value).toBeNull()
+  }
+  view.unmount()
+  mount()
+  if (failCleanup) {
+    await screen.findByText(/pode já ter sido enviado/)
+    expect(screen.queryByRole('button', { name: 'Salvar jogador' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Conferi o elenco/ })).toBeNull()
+    workspace.mockResolvedValueOnce({ ...roster, groups: [] })
+    await action.click(button('Conferir elenco atualizado'))
+    await screen.findByText(/Não foi possível confirmar o elenco autorizado/)
+    expect(screen.queryByRole('button', { name: /Conferi o elenco/ })).toBeNull()
+    await action.click(button('Conferir elenco atualizado'))
+    const list = await screen.findByRole('list', { name: 'Elenco atualizado' })
+    expect(within(list).getByText(new RegExp(inputName))).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Salvar jogador' })).toBeNull()
+    await action.click(button('Conferi o elenco e quero continuar o cadastro'))
+    expect(form().getByRole('textbox', { name: 'Nome' })).toHaveValue(inputName)
+  } else {
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    expect(screen.queryByRole('region', { name: 'Novo jogador' })).toBeNull()
+  }
+  expect(createPlayer).toHaveBeenCalledExactlyOnceWith(group.id, expect.objectContaining({ name: inputName }))
 })
