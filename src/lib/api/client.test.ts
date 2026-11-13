@@ -34,6 +34,23 @@ describe('isolated DEV HTTP client preparation', () => {
     release(new Response(JSON.stringify({ private: 'old-user' })))
     await expect(pending).rejects.toMatchObject({ status: 401 })
   })
+
+  it('aborts an in-flight write on suspension and rejects its late success after resuming', async () => {
+    let release!: (value: Response) => void
+    const response = new Promise<Response>(resolve => { release = resolve })
+    const transport = vi.fn<typeof fetch>().mockReturnValueOnce(response).mockImplementation(() => Promise.resolve(Response.json({ ok: true })))
+    const client = createApiClient('http://localhost:8787', () => Promise.resolve('synthetic-token'), transport)
+    const pending = client.request('/matches/fixture/draw', 'PUT', { draw: 'fixture' })
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce())
+    client.suspend()
+    await expect(client.request('/matches/fixture/draw', 'PUT')).rejects.toMatchObject({ kind: 'local' })
+    client.resume()
+    release(Response.json({ ok: true }))
+    await expect(pending).rejects.toMatchObject({ kind: 'local' })
+    expect(transport.mock.calls[0]?.[1]?.signal?.aborted).toBe(true)
+    expect(transport).toHaveBeenCalledOnce()
+    await expect(client.request('/workspace')).resolves.toEqual({ ok: true })
+  })
   it('rejects alternate origins/redirect destinations and never fetches without a token', async () => {
     const transport = vi.fn<typeof fetch>()
     const client = createApiClient('http://localhost:8787', () => Promise.resolve(null), transport)
@@ -45,5 +62,19 @@ describe('isolated DEV HTTP client preparation', () => {
     for (const base of ['http://other.test', 'https://user:password@other.test', 'https://other.test/path', 'https://other.test?token=bad']) {
       expect(() => createApiClient(base, () => Promise.resolve(null))).toThrow()
     }
+  })
+
+  it('ignores a late 401 from a bearer that has since changed', async () => {
+    let access = 'old'
+    let release!: (response: Response) => void
+    const transport = vi.fn<typeof fetch>().mockReturnValue(new Promise<Response>(resolve => { release = resolve }))
+    const onFailure = vi.fn()
+    const client = createApiClient('http://localhost:8787', () => Promise.resolve(access), transport, onFailure)
+    const pending = client.request('/me')
+    await vi.waitFor(() => expect(transport).toHaveBeenCalledOnce())
+    access = 'new'
+    release(new Response(null, { status: 401 }))
+    await expect(pending).rejects.toMatchObject({ kind: 'local' })
+    expect(onFailure).not.toHaveBeenCalled()
   })
 })

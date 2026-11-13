@@ -54,7 +54,8 @@ it('criar grupo também permite cancelar a troca e mantém a partida digitada', 
 
 it('cancelar logout preserva o rascunho; confirmar encerra e recarga dispara aviso antes de sair', async () => {
   const user = userEvent.setup(), onLogout = vi.fn().mockResolvedValue(undefined)
-  render(<FutebolWorkspace services={client} internalId="user" onLogout={onLogout} loggingOut={false} sessionNotice={null} environment="dev" />)
+  render(<FutebolWorkspace services={client} internalId="user" onLogout={onLogout} loggingOut={false}
+    data={{ groups: [group], players: [player] }} suspended={false} sessionActions={null} environment="dev" />)
   await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Não perder')
   const unload = new Event('beforeunload', { cancelable: true })
   window.dispatchEvent(unload)

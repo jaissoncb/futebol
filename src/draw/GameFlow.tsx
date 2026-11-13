@@ -25,7 +25,7 @@ function editableResult(result: DrawResult, playersOnCourt: number): AdjustmentS
   return { playersOnCourt, teams: result.teams.map((team) => ({ playerIds: [...team.playerIds], reserveIds: [...team.reserveIds] })) }
 }
 
-export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft }) {
+export function GameFlow({ group, players, client = null, onSaved, onAttemptChange, onDraftChange, initialDraft, authorizationVersion }: { group: GroupWithRole; players: Player[]; client?: FutebolDataClient | null; onSaved?: (id: string) => void; onAttemptChange?: (pending: boolean) => void; onDraftChange?: (dirty: boolean) => void; initialDraft?: RepeatDraft; authorizationVersion?: number }) {
   const { confirm, dialogProps } = useConfirmation()
   const [step, setStep] = useState<GameStep>(initialDraft ? 'participants' : 'details')
   const [config, setConfig] = useState<GameConfig>(initialDraft ? { ...initialDraft.config, drawMode: initialDraft.config.drawMode ?? 'classic' } : { drawMode: 'classic', name: '', matchDate: localDateInputValue(), matchTime: '', playersOnCourt: group.default_players_on_court, teamCount: 2 })
@@ -45,7 +45,7 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
     const clear = () => { scope.abort(); history.current = null }
     const unsubscribe = client?.subscribeClosed?.(clear)
     return () => { clear(); unsubscribe?.() }
-  }, [client, group.id])
+  }, [client, group.id, authorizationVersion])
   const [busy, setBusy] = useState(false)
   const [runs, setRuns] = useState<DrawResult[]>([])
   const [drawContext, setDrawContext] = useState('')

@@ -1,10 +1,24 @@
-import { LocalStorage, MemoryStorage, setInsecureStorage, storageSettings, StorageKeys } from '@kinde-oss/kinde-auth-react/utils'
+import { clearRefreshTimer, LocalStorage, MemoryStorage, setInsecureStorage, storageSettings, StorageKeys } from '@kinde-oss/kinde-auth-react/utils'
 
 export const KINDE_SCOPE = 'openid profile email offline'
 export const FUTEBOL_STORAGE_PREFIX = 'futebol-kinde-test-'
 const TRANSACTION_TTL_MS = 10 * 60 * 1000
 const transactionKeys = [StorageKeys.state, StorageKeys.nonce, StorageKeys.codeVerifier]
 const tokenKeys = [StorageKeys.accessToken, StorageKeys.idToken, StorageKeys.refreshToken]
+
+class SessionMemory extends MemoryStorage {
+  private ended = false
+
+  override setSessionItem(key: StorageKeys, value: unknown) {
+    if (!this.ended) super.setSessionItem(key, value)
+  }
+
+  end() {
+    this.ended = true
+    clearRefreshTimer()
+    this.destroySession()
+  }
+}
 
 // Adapted from Account's reviewed architecture. SDK still owns state/nonce/S256
 // generation and validation; no tokens are ever read from persistent storage.
@@ -49,7 +63,7 @@ export function configureKindeSession(environment: 'dev' | 'prd' = 'dev') {
   const prefix = environment === 'dev' ? FUTEBOL_STORAGE_PREFIX : 'futebol-kinde-prd-'
   storageSettings.keyPrefix = prefix
   storageSettings.useInsecureForRefreshToken = false
-  const memory = new MemoryStorage()
+  const memory = new SessionMemory()
   const transaction = new OAuthTransactionStorage(memory, prefix)
   setInsecureStorage(transaction)
   return { memory, transaction }
