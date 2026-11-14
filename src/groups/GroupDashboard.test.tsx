@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
 import { GroupDashboard } from './GroupDashboard'
 import * as service from './group-service'
 import type { FutebolDataClient } from '../lib/data-client'
@@ -54,8 +55,9 @@ it('criar grupo também permite cancelar a troca e mantém a partida digitada', 
 
 it('cancelar logout preserva o rascunho; confirmar encerra e recarga dispara aviso antes de sair', async () => {
   const user = userEvent.setup(), onLogout = vi.fn().mockResolvedValue(undefined)
-  render(<FutebolWorkspace services={client} internalId="user" onLogout={onLogout} loggingOut={false}
-    data={{ groups: [group], players: [player] }} suspended={false} sessionActions={null} environment="dev" />)
+  render(<MemoryRouter><FutebolWorkspace onLogout={onLogout} loggingOut={false} access="active"
+    workspace={{ services: client, internalId: 'user', data: { groups: [group], players: [player] } }}
+    sessionActions={null} environment="dev" /></MemoryRouter>)
   await user.type(await screen.findByLabelText(/Nome.*opcional/), 'Não perder')
   const unload = new Event('beforeunload', { cancelable: true })
   window.dispatchEvent(unload)

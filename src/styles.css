@@ -129,6 +129,14 @@ select:focus-visible {
   font-weight: 700;
 }
 
+.workspace-session-notice {
+  position: fixed;
+  z-index: 5;
+  inset: auto 12px max(12px, env(safe-area-inset-bottom));
+  width: min(calc(100% - 24px), 600px);
+  margin-inline: auto;
+}
+
 .hero-card {
   position: relative;
   overflow: hidden;

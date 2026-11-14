@@ -60,7 +60,7 @@ export function MatchWorkspace({ client, group, players, onAttemptChange, onDraf
       {repeatError ? <p className="form-status" role="alert">{repeatError}</p> : null}
       {group.role !== 'member' && <>
         <DraftStatusMessage status={status} onReload={() => { setDraft(undefined); setSession(0); setSaved(false); attemptChanged(false); draftChanged(false); reload() }} />
-        {record.state === 'loading' ? <p role="status">Abrindo rascunho da partida…</p>
+        {record.state === 'loading' ? <p role="status" data-loading-workspace>Abrindo rascunho da partida…</p>
           : record.state === 'error' ? <DraftReadError issue={record.issue} onRetry={reload} onDiscard={() => void discardCorrupt()} />
           : <GameFlow key={session} client={client} group={group} players={players}
             initialDraft={draft} restored={session === 0 ? record.initial : null} writer={record.writer}

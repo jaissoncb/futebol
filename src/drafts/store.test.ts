@@ -81,6 +81,19 @@ it('impede que autorização e escrita iniciadas antes do logout reabram o rascu
   expect(await readDraft(draftScope(await authorize(), 'a')!, 'player', isPlayerDraft)).toMatchObject({ value: null })
 })
 
+it('fecha o acesso da aba sem invalidar o rascunho durável após uma recusa ambígua', async () => {
+  const access = await authorize()
+  const lease = new AbortController()
+  const scope = draftScope({ ...access, signal: lease.signal }, 'a')!
+  await writeDraft(scope, 'player', 0, player)
+  const pendingWrite = writeDraft(scope, 'player', 1, { ...player, name: 'Outra revisão' })
+  lease.abort()
+  await expect(pendingWrite).rejects.toMatchObject({ issue: 'revoked' })
+  await expect(readDraft(scope, 'player', isPlayerDraft)).rejects.toMatchObject({ issue: 'revoked' })
+  const revalidated = await authorizeDrafts('dev', 'u', ['a'], new AbortController().signal, access)
+  expect(await readDraft(draftScope(revalidated, 'a')!, 'player', isPlayerDraft)).toEqual({ revision: 1, value: player })
+})
+
 it('rejeita conteúdo corrompido e protege um schema futuro contra descarte', async () => {
   const a = draftScope(await authorize(), 'a')!
   await writeDraft(a, 'player', 0, { ...player, refresh_token: 'fixture' })

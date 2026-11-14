@@ -11,6 +11,7 @@ import dev from '../../deployment/frontend-dev.json'
 import { validateFutebolEnvironment } from '../config/futebol-environment'
 import { readSelectedGroup, rememberSelectedGroup } from '../groups/selected-group'
 import { group, players } from '../matches/test-fixtures'
+import { invalidateDrafts } from '../drafts/store'
 
 const config = validateFutebolEnvironment(dev, 'dev')
 const profileId = 'd0000000-0000-0000-0000-000000000001'
@@ -99,6 +100,72 @@ describe('Futebol session boundary', () => {
         headers: { Authorization: expect.stringMatching(/^Bearer /) as string } })
     }
     expect(calls('/workspace')[0]?.[1]?.headers).toEqual(calls('/me')[0]?.[1]?.headers)
+  })
+
+  it('keeps the same editor and avoids checks on repeated visibility and cached pageshow events', async () => {
+    const { request } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Mesmo documento' } })
+    request.mockClear()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const now = Date.now()
+    for (const delay of [5_000, 30_000, 60_000]) {
+      vi.setSystemTime(now + delay)
+      foreground()
+      fireEvent(window, new PageTransitionEvent('pageshow', { persisted: true }))
+      expect(draftField()).toBe(draft)
+      expect(draft).toBeVisible()
+      expect(draft.closest('[hidden], [inert]')).toBeNull()
+    }
+    expect(draftField()).toHaveValue('Mesmo documento')
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it.each([51_000, 86_400_000])('retains the editor during renewal after %d ms', async (elapsed) => {
+    const { request, response, calls } = fixture(60)
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Edição atual' } })
+    const now = Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(now + elapsed)
+    let release!: (value: Response) => void
+    const pending = new Promise<Response>(resolve => { release = resolve })
+    request.mockImplementation(url => requestUrl(url).pathname === '/oauth2/token'
+      ? pending : Promise.resolve(response(requestUrl(url))))
+    foreground()
+    if (elapsed < 60_000) expect(draft).toBeVisible()
+    else expect(draft).not.toBeVisible()
+    expect(draft.closest('[inert]')).toBeInTheDocument()
+    foreground()
+    await waitFor(() => expect(calls('/oauth2/token')).toHaveLength(1))
+    await act(async () => { release(response(new URL('/oauth2/token', config.identity.domain))); await pending })
+    await waitFor(() => expect(draft.closest('[inert]')).toBeNull())
+    expect(draftField()).toBe(draft)
+    expect(draftField()).toHaveValue('Edição atual')
+  })
+
+  it('shows authorized data read-only offline and reconnects without discarding a durable draft', async () => {
+    vi.stubGlobal('indexedDB', new IDBFactory())
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange)
+    const { request, calls } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    const draft = draftField()
+    fireEvent.change(draft, { target: { value: 'Rascunho offline' } })
+    await screen.findByText('Rascunho guardado neste dispositivo.')
+    request.mockClear()
+    disconnect(); foreground()
+    expect(draft).toBeVisible()
+    expect(draft.closest('[inert]')).toBeInTheDocument()
+    expect(request).not.toHaveBeenCalled()
+    connect()
+    await waitFor(() => expect(draft.closest('[inert]')).toBeNull())
+    expect(draftField()).toBe(draft)
+    expect(draftField()).toHaveValue('Rascunho offline')
+    expect(calls('/me')).toHaveLength(1)
+    expect(calls('/workspace')).toHaveLength(1)
+    expect(calls('/oauth2/token')).toHaveLength(0)
   })
 
   it('keeps a mounted draft across refresh transport failure, offline and revalidation', async () => {
@@ -204,16 +271,19 @@ describe('Futebol session boundary', () => {
     expect(destroy).not.toHaveBeenCalled()
   })
 
-  it.each(['/me', '/workspace'])('removes previously authorized data after a definitive %s 403', async (path) => {
+  it.each(['/me', '/workspace'])('removes private DOM and retains the durable draft after an ambiguous %s 403', async (path) => {
+    vi.stubGlobal('indexedDB', new IDBFactory())
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange)
     const { request, response, destroy, calls } = fixture()
     await screen.findByRole('heading', { name: 'Configure a partida' })
     const draft = draftField()
-    fireEvent.change(draft, { target: { value: 'Rascunho revogado' } })
+    fireEvent.change(draft, { target: { value: 'Rascunho confirmado' } })
+    await screen.findByText('Rascunho guardado neste dispositivo.')
     request.mockImplementation(url => {
       const target = requestUrl(url)
       return Promise.resolve(target.pathname === path ? Response.json({}, { status: 403 }) : response(target))
     })
-    foreground()
+    disconnect(); connect()
     await screen.findByText('Seu acesso ao espaço de trabalho não foi confirmado.')
     expect(draft).not.toBeInTheDocument()
     expect(screen.queryByText(group.name)).not.toBeInTheDocument()
@@ -223,7 +293,7 @@ describe('Futebol session boundary', () => {
     request.mockImplementation(url => Promise.resolve(response(requestUrl(url))))
     await userEvent.setup().click(screen.getByRole('button', { name: 'Tentar novamente' }))
     await screen.findByRole('heading', { name: 'Configure a partida' })
-    expect(draftField()).toHaveValue('')
+    expect(draftField()).toHaveValue('Rascunho confirmado')
   })
 
   it('deduplicates foreground, pageshow, reconnect and manual access during an outstanding renewal', async () => {
@@ -322,6 +392,19 @@ describe('Futebol session boundary', () => {
     expect(request).not.toHaveBeenCalled()
     expect(session.memory.getSessionItem(StorageKeys.accessToken)).toBeNull()
   })
+
+  it('checks the logout fence on cached pageshow before depending on a queued storage event', async () => {
+    vi.stubGlobal('indexedDB', new IDBFactory())
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange)
+    const { request } = fixture()
+    await screen.findByRole('heading', { name: 'Configure a partida' })
+    request.mockClear()
+    await invalidateDrafts('dev')
+    fireEvent(window, new PageTransitionEvent('pageshow', { persisted: true }))
+    expect(signIn()).toBeVisible()
+    expect(screen.queryByText(group.name)).not.toBeInTheDocument()
+    expect(request).not.toHaveBeenCalled()
+  })
   it('invalida o rascunho ao revalidar o grupo com papel de membro', async () => {
     vi.stubGlobal('indexedDB', new IDBFactory())
     vi.stubGlobal('IDBKeyRange', IDBKeyRange)
@@ -335,11 +418,11 @@ describe('Futebol session boundary', () => {
       return Promise.resolve(url.pathname === '/workspace'
         ? Response.json({ groups: [{ ...group, role: 'member' }], players }) : response(url))
     })
-    foreground()
+    disconnect(); connect()
     await screen.findByText('Membro')
     expect(screen.queryByRole('textbox', { name: /Nome.*opcional/ })).toBeNull()
     request.mockImplementation(input => Promise.resolve(response(requestUrl(input))))
-    foreground()
+    disconnect(); connect()
     await screen.findByRole('heading', { name: 'Configure a partida' })
     expect(draftField()).toHaveValue('')
   })

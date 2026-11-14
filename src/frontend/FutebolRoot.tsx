@@ -11,6 +11,7 @@ import { PwaInstall, PwaInstallProvider } from '../PwaInstall'
 import { FutebolWorkspace } from './FutebolWorkspace'
 import { clearSelectedGroup } from '../groups/selected-group'
 import { createFutebolSession } from './futebol-session'
+import { clearWorkspaceScroll } from './workspace-scroll'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Callbacks = NonNullable<ComponentProps<typeof KindeProvider>['callbacks']>
@@ -26,7 +27,7 @@ export function FutebolRoot({ config, session, initialFailed = false }: {
   const channelName = `futebol-${config.environment}-session`
   useLayoutEffect(() => {
     // Register before the SDK bootstrap can delay mounting its children.
-    const end = () => { clearSelectedGroup(); controller.end() }
+    const end = () => { clearSelectedGroup(); clearWorkspaceScroll(); controller.end() }
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
     if (channel) channel.onmessage = (event: MessageEvent<unknown>) => { if (event.data === 'logout') end() }
     const storage = (event: StorageEvent) => { if (isDraftLogout(event, config.environment)) end() }
@@ -61,7 +62,7 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
   config: FutebolFrontendConfiguration; controller: Controller; logoutLockRef: { current: boolean }; logoutFailed: boolean
 }) {
   const auth = useKindeAuth()
-  const { phase, workspace } = useSyncExternalStore(controller.subscribe, controller.snapshot)
+  const { phase, workspace, access, retainedLayout } = useSyncExternalStore(controller.subscribe, controller.snapshot)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const channelName = `futebol-${config.environment}-session`
@@ -98,6 +99,7 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
     logoutLockRef.current = true
     setStatus(null); setBusy(true)
     clearSelectedGroup()
+    clearWorkspaceScroll()
     controller.end()
     const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel(channelName)
     channel?.postMessage('logout'); channel?.close()
@@ -116,11 +118,12 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
     : phase === 'unavailable' ? 'Sessão temporariamente indisponível. Confira a conexão para continuar.'
     : phase === 'reauthenticate' ? 'Não foi possível renovar a sessão. Entre novamente com o Sabará ID.'
     : phase === 'denied' ? 'Seu acesso ao espaço de trabalho não foi confirmado.'
-    : phase === 'ended' ? 'A sessão foi encerrada. Entre novamente.' : null
+    : phase === 'ended' ? 'A sessão foi encerrada. Entre novamente.'
+    : access === 'readonly' ? 'Verificando a conexão com o Futebol…' : null
   const retry = phase === 'unavailable' || phase === 'denied'
     ? <button className="secondary-action" onClick={controller.retry}>Tentar novamente</button> : null
   const canReenter = phase === 'reauthenticate' || phase === 'unavailable'
-  const reenter = canReenter && !workspace
+  const reenter = canReenter && !retainedLayout
     ? <button className="secondary-action" disabled={busy} onClick={() => void login()}>Entrar novamente com Sabará ID</button> : null
   const actions = notice ? <section className="notice" aria-label="Sessão do Futebol">
     <p role="status">{notice}</p>{retry}{reenter}
@@ -128,8 +131,8 @@ function FutebolHome({ config, controller, logoutLockRef, logoutFailed }: {
     {status ? <p role="status">{status}</p> : null}
   </section> : null
 
-  const home = workspace ? <FutebolWorkspace services={workspace.services} internalId={workspace.internalId}
-    data={workspace.data} drafts={workspace.drafts} draftIssue={workspace.draftIssue} suspended={phase !== 'ready'} sessionActions={actions} onGroupsChanged={() => controller.foreground()}
+  const home = retainedLayout ? <FutebolWorkspace workspace={workspace} access={access}
+    sessionActions={actions} onGroupsChanged={controller.groupsChanged}
     onReenter={canReenter ? () => login() : undefined}
     onLogout={logout} loggingOut={busy} environment={config.environment} />
     : <div className="app-shell">

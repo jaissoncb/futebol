@@ -11,6 +11,7 @@ export type DraftAccess = {
   userId: string
   epoch: string
   groups: ReadonlyMap<string, string>
+  signal?: AbortSignal
 }
 
 export type DraftScope = {
@@ -19,6 +20,7 @@ export type DraftScope = {
   groupId: string
   epoch: string
   grant: string
+  signal?: AbortSignal
 }
 
 type Account = {
@@ -40,7 +42,7 @@ const fenceKey = (environment: DraftEnvironment) => `futebol.drafts.logout.${env
 export function isDraftLogout(event: StorageEvent, environment: DraftEnvironment) {
   return event.key === fenceKey(environment) && event.newValue !== null
 }
-function fence(environment: DraftEnvironment) {
+export function draftLogoutFence(environment: DraftEnvironment) {
   try { return localStorage.getItem(fenceKey(environment)) } catch { return null }
 }
 
@@ -108,12 +110,12 @@ function purge(tx: IDBTransaction, environment: DraftEnvironment, keep?: (key: K
 
 /** Called only with the profile and workspace verified by the same session lease. */
 export function authorizeDrafts(environment: DraftEnvironment, userId: string, allowed: string[], signal: AbortSignal, prior: DraftAccess | null = null) {
-  const expectedFence = fence(environment)
+  const expectedFence = draftLogoutFence(environment)
   return transaction<DraftAccess>('readwrite', (tx, done, fail) => {
     const accounts = tx.objectStore('accounts')
     const read = accounts.get([environment])
     read.onsuccess = () => {
-      if (signal.aborted || fence(environment) !== expectedFence) { fail(new DraftError('revoked')); return }
+      if (signal.aborted || draftLogoutFence(environment) !== expectedFence) { fail(new DraftError('revoked')); return }
       const previous = read.result as Account | undefined
       if (previous && (typeof previous.epoch !== 'string' || !previous.groups || typeof previous.groups !== 'object')) {
         fail(new DraftError('corrupt'))
@@ -138,9 +140,9 @@ export function authorizeDrafts(environment: DraftEnvironment, userId: string, a
 export function invalidateDrafts(environment: DraftEnvironment) {
   // The opaque fence also invalidates an older database if IndexedDB is temporarily unavailable.
   try { localStorage.setItem(fenceKey(environment), crypto.randomUUID()) } catch { /* IndexedDB still invalidates the account. */ }
-  const expectedFence = fence(environment)
+  const expectedFence = draftLogoutFence(environment)
   return transaction<void>('readwrite', (tx, done) => {
-    if (fence(environment) === expectedFence) {
+    if (draftLogoutFence(environment) === expectedFence) {
       tx.objectStore('accounts').delete([environment])
       purge(tx, environment)
     }
@@ -150,24 +152,24 @@ export function invalidateDrafts(environment: DraftEnvironment) {
 
 export function draftScope(access: DraftAccess | null | undefined, groupId: string): DraftScope | null {
   const grant = access?.groups.get(groupId)
-  return access && grant ? { environment: access.environment, userId: access.userId, epoch: access.epoch, groupId, grant } : null
+  return access && grant ? { environment: access.environment, userId: access.userId, epoch: access.epoch, groupId, grant, signal: access.signal } : null
 }
 
 function scoped<T>(scope: DraftScope, kind: DraftKind, mode: IDBTransactionMode,
   action: (row: Row | undefined, store: IDBObjectStore, key: Key) => T) {
-  const { environment, userId, groupId, epoch, grant } = scope
+  const { environment, userId, groupId, epoch, grant, signal } = scope
   const key: Key = [environment, userId, groupId, kind]
   return transaction<T>(mode, (tx, done, fail) => {
     const account = tx.objectStore('accounts').get([environment])
     account.onsuccess = () => {
       const current = account.result as Account | undefined
-      if (!current || current.userId !== userId || current.epoch !== epoch || current.fence !== fence(environment)
+      if (signal?.aborted || !current || current.userId !== userId || current.epoch !== epoch || current.fence !== draftLogoutFence(environment)
         || current.groups?.[groupId] !== grant) { fail(new DraftError('revoked')); return }
       const store = tx.objectStore('drafts')
       const read = store.get(key)
       read.onsuccess = () => {
         try {
-          if (current.fence !== fence(environment)) throw new DraftError('revoked')
+          if (signal?.aborted || current.fence !== draftLogoutFence(environment)) throw new DraftError('revoked')
           done(action(read.result as Row | undefined, store, key))
         } catch (error) { fail(error) }
       }

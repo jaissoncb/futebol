@@ -15,7 +15,7 @@ export function MatchHistory({ client, group, selectedId, onSelect }: { client: 
 
 function HistoryList({ client, groupId, onSelect }: { client: FutebolDataClient | null; groupId: string; onSelect: (id: string) => void }) {
   const list = useRef<HTMLDivElement>(null)
-  useEffect(() => { list.current?.focus() }, [])
+  useEffect(() => { list.current?.focus({ preventScroll: true }) }, [])
   const [rows, setRows] = useState<Tables<'matches'>[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -59,7 +59,7 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
   const [copying, setCopying] = useState(false)
   const [shareNotice, setShareNotice] = useState<string | null>(null)
   const shareLock = useRef(false)
-  useEffect(() => { detail.current?.focus() }, [loading, error])
+  useEffect(() => { detail.current?.focus({ preventScroll: true }) }, [loading, error])
   useEffect(() => {
     let cancelled = false
     void Promise.resolve().then(async () => {

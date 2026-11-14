@@ -4,13 +4,16 @@ import type { configureKindeSession } from '../auth/kinde-session'
 import type { FutebolFrontendConfiguration } from '../config/futebol-environment'
 import type { GroupWorkspaceData } from '../groups/group-service'
 import { ApiError } from '../lib/api/client'
-import { authorizeDrafts, draftIssue, invalidateDrafts, type DraftAccess, type DraftIssue } from '../drafts/store'
+import { authorizeDrafts, draftIssue, draftLogoutFence, invalidateDrafts, type DraftAccess, type DraftIssue } from '../drafts/store'
 import { createFutebolApiServices, type FutebolApiServices } from '../lib/api/services'
+import { clearWorkspaceScroll } from './workspace-scroll'
+import { clearSelectedGroup } from '../groups/selected-group'
 
 type Session = ReturnType<typeof configureKindeSession>
 type Phase = 'opening' | 'anonymous' | 'ready' | 'recovering' | 'unavailable' | 'denied' | 'reauthenticate' | 'ended'
-type Workspace = { services: FutebolApiServices; internalId: string; data: GroupWorkspaceData; drafts: DraftAccess | null; draftIssue?: DraftIssue }
-type Snapshot = { phase: Phase; workspace: Workspace | null }
+export type Workspace = { services: FutebolApiServices; internalId: string; data: GroupWorkspaceData; drafts?: DraftAccess | null; draftIssue?: DraftIssue }
+export type WorkspaceAccess = 'active' | 'readonly' | 'blocked'
+type Snapshot = { phase: Phase; workspace: Workspace | null; access: WorkspaceAccess; retainedLayout: boolean }
 type Renewal = 'transport' | 'missing' | 'unknown'
 const RENEW_EARLY_MS = 10_000
 const RETRY_DELAY_MS = 2_000
@@ -33,7 +36,7 @@ function renewalFailure(error?: string): Renewal {
 }
 
 export function createFutebolSession(config: FutebolFrontendConfiguration, session: Session, initialFailed: boolean) {
-  let snapshot: Snapshot = { phase: initialFailed ? 'ended' : 'opening', workspace: null }
+  let snapshot: Snapshot = { phase: initialFailed ? 'ended' : 'opening', workspace: null, access: 'blocked', retainedLayout: false }
   let stopped = initialFailed
   let initialized = false
   let sdkAuthenticated = false
@@ -44,6 +47,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   let renewedToken: string | null = null
   let probe: FutebolApiServices | undefined
   let draftLease: AbortController | undefined
+  let draftSession = new AbortController()
   let draftAccess: DraftAccess | null = null
   let running = false
   let queued = false
@@ -53,25 +57,35 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   const deniedPaths = new Set<string>()
   let offline = false
   let timer: ReturnType<typeof setTimeout> | undefined
+  let expiry: ReturnType<typeof setTimeout> | undefined
   let watchdog: ReturnType<typeof setTimeout> | undefined
   let mounts = 0
   const listeners = new Set<() => void>()
+  const logoutFence = draftLogoutFence(config.environment)
 
   const token = () => session.memory.getSessionItem(StorageKeys.accessToken) as string | null
   const online = () => !offline && navigator.onLine !== false
   const log = (event: string) => {
     if (config.environment === 'dev') console.info('futebol_session', event)
   }
-  const publish = (phase: Phase, workspace = snapshot.workspace) => {
-    if (snapshot.phase === phase && workspace === snapshot.workspace) return
-    snapshot = { phase, workspace }
-    log(phase)
+  const publish = (phase: Phase, workspace = snapshot.workspace, access: WorkspaceAccess = phase === 'ready' ? 'active' : 'blocked') => {
+    if (snapshot.phase === phase && workspace === snapshot.workspace && access === snapshot.access) return
+    if (snapshot.phase !== phase) log(phase)
+    snapshot = { phase, workspace, access, retainedLayout: phase !== 'ended' && (workspace !== null || snapshot.retainedLayout) }
     for (const listener of listeners) listener()
   }
   const suspend = () => {
     clearTimeout(timer)
     services.suspend()
-    checkedToken = null
+  }
+  const waiting = (phase: Phase) => {
+    clearTimeout(expiry)
+    const remaining = expiresAt(checkedToken) - Date.now()
+    const access = token()
+    if (snapshot.workspace && remaining > 0 && (access === checkedToken || access === renewedToken)) {
+      publish(phase, snapshot.workspace, 'readonly')
+      expiry = setTimeout(() => publish(snapshot.phase, snapshot.workspace, 'blocked'), remaining)
+    } else publish(phase, snapshot.workspace, 'blocked')
   }
   const invalidate = () => {
     revision++
@@ -82,25 +96,35 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   const end = () => {
     if (stopped) return
     stopped = true
+    if (verifiedProfileId) clearWorkspaceScroll()
     verifiedProfileId = undefined
+    draftSession.abort()
     invalidate()
     clearTimeout(watchdog)
+    clearTimeout(expiry)
     services.close()
     session.memory.end()
     publish('ended', null)
     try { session.transaction.destroySession() } catch { /* Private access is already closed if storage is unavailable. */ }
   }
+  const loggedOutElsewhere = () => {
+    if (draftLogoutFence(config.environment) === logoutFence) return false
+    clearSelectedGroup()
+    clearWorkspaceScroll()
+    end()
+    return true
+  }
 
   function onPrivateFailure(error: ApiError, path: string) {
-    if (snapshot.phase !== 'ready') return
+    if (snapshot.access !== 'active') return
     if (error.status === 401) {
       needsRefresh = true
-      requestCheck()
+      requestCheck(true)
     } else if (error.status === 403 && !deniedPaths.has(path)) {
       // The resource operation fails normally. Recheck membership/roles before showing cached data.
       deniedPaths.add(path)
       log('resource_denied')
-      requestCheck()
+      requestCheck(true)
     } else if (error.kind === 'transport' || error.status === 503) {
       // Timeouts/transport errors can leave a write's outcome unknown. Never replay it.
       requestCheck()
@@ -108,22 +132,23 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   }
 
   const services = createFutebolApiServices(config.apiBaseUrl, () => {
+    if (loggedOutElsewhere()) return Promise.resolve(null)
     const current = token()
-    if (checkedToken && current === checkedToken && expiresAt(current) > Date.now() + RENEW_EARLY_MS && online()) return Promise.resolve(current)
-    if (snapshot.phase === 'ready') {
+    if (snapshot.access === 'active' && current === checkedToken && expiresAt(current) > Date.now() + RENEW_EARLY_MS && online()) return Promise.resolve(current)
+    if (snapshot.access === 'active') {
       if (expiresAt(current) <= Date.now() + RENEW_EARLY_MS) needsRefresh = true
-      requestCheck()
+      requestCheck(current !== checkedToken)
     }
     return Promise.resolve(null)
   }, undefined, onPrivateFailure)
   services.suspend()
 
   function retry() {
-    if (!online()) { publish('unavailable'); return }
+    if (!online()) { waiting('unavailable'); return }
     if (attempts < MAX_ATTEMPTS) {
-      publish('recovering')
-      timer = setTimeout(requestCheck, RETRY_DELAY_MS)
-    } else publish('unavailable')
+      waiting(snapshot.access === 'readonly' ? 'ready' : 'recovering')
+      timer = setTimeout(() => requestCheck(), RETRY_DELAY_MS)
+    } else waiting('unavailable')
   }
 
   async function renew() {
@@ -141,7 +166,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
     const started = revision
     const current = () => !stopped && started === revision && online()
     attempts++
-    watchdog = setTimeout(() => { if (current()) publish('unavailable') }, 20_000)
+    watchdog = setTimeout(() => { if (current()) waiting('unavailable') }, 20_000)
     try {
       let access = token()
       if (needsRefresh || expiresAt(access) <= Date.now() + RENEW_EARLY_MS) {
@@ -155,7 +180,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
           const failure = renewalFailure(result.error)
           log(failure === 'transport' ? 'refresh_transport' : failure === 'missing' ? 'refresh_missing' : 'refresh_unclassified')
           if (failure === 'missing') end()
-          else if (failure === 'unknown') publish('reauthenticate')
+          else if (failure === 'unknown' && current()) { clearTimeout(expiry); publish('reauthenticate') }
           else if (current()) retry()
           return
         }
@@ -174,6 +199,11 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       if (verifiedProfileId && profile.id !== verifiedProfileId) { end(); void invalidateDrafts(config.environment).catch(() => undefined); return }
       const data = await verifier.workspace()
       if (!current()) return
+      if (token() !== access || expiresAt(access) <= Date.now() + RENEW_EARLY_MS) {
+        needsRefresh = expiresAt(token()) <= Date.now() + RENEW_EARLY_MS
+        retry()
+        return
+      }
       draftLease = new AbortController()
       let storageIssue: DraftIssue | undefined
       const allowed = data.groups.filter(group => group.role === 'owner' || group.role === 'admin').map(group => group.id)
@@ -196,21 +226,26 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       checkedToken = access
       verifiedProfileId = profile.id
       renewedToken = null
+      clearTimeout(expiry)
       services.resume()
       attempts = 0
-      publish('ready', { services, internalId: profile.id, data, drafts: draftAccess, draftIssue: storageIssue })
-      timer = setTimeout(() => {
-        needsRefresh = true
-        requestCheck()
-      }, Math.max(1, expiresAt(access) - Date.now() - RENEW_EARLY_MS))
+      publish('ready', { services, internalId: profile.id, data,
+        drafts: draftAccess && { ...draftAccess, signal: draftSession.signal }, draftIssue: storageIssue })
+      timer = setTimeout(() => requestCheck(token() !== checkedToken),
+        Math.max(1, expiresAt(access) - Date.now() - RENEW_EARLY_MS))
     } catch (error) {
       if (!current()) return
       if (error instanceof ApiError && error.kind === 'http' && error.status === 401) {
+        checkedToken = null
         if (renewedToken && renewedToken === token()) end()
         else { needsRefresh = true; retry() }
       } else if (error instanceof ApiError && error.kind === 'http' && error.status === 403) {
-        void invalidateDrafts(config.environment).catch(() => undefined)
-        draftAccess = null
+        // A status alone does not prove revocation. Revoke this tab's lease,
+        // then require both identity and membership before reopening storage.
+        checkedToken = null
+        clearTimeout(expiry)
+        draftSession.abort()
+        draftSession = new AbortController()
         publish('denied', null)
       } else {
         retry()
@@ -224,13 +259,29 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
     }
   }
 
-  function requestCheck() {
-    if (stopped || !initialized || snapshot.phase === 'anonymous' || snapshot.phase === 'reauthenticate') return
-    if (!online()) { invalidate(); publish('unavailable'); return }
+  function requestCheck(protect = false) {
+    if (stopped || !initialized || snapshot.phase === 'anonymous' || snapshot.phase === 'reauthenticate' || loggedOutElsewhere()) return
+    if (protect) checkedToken = null
+    if (!online()) { invalidate(); waiting('unavailable'); return }
     if (running) return
     suspend()
-    publish('recovering')
+    waiting(snapshot.workspace && expiresAt(checkedToken) > Date.now() ? 'ready' : 'recovering')
     void check()
+  }
+
+  function checkOnReturn() {
+    if (stopped || loggedOutElsewhere()) return
+    const access = token()
+    if (snapshot.access === 'active') {
+      deniedPaths.clear()
+      if (access !== checkedToken || expiresAt(access) - Date.now() <= RENEW_EARLY_MS || !online()) {
+        requestCheck(access !== checkedToken)
+      }
+      return
+    }
+    if (snapshot.access === 'readonly' && (expiresAt(checkedToken) <= Date.now()
+      || (access !== checkedToken && access !== renewedToken))) waiting(snapshot.phase)
+    if (snapshot.phase === 'unavailable' && attempts < MAX_ATTEMPTS && online()) requestCheck()
   }
 
   return {
@@ -264,23 +315,20 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       offline = true
       if (stopped || !initialized || snapshot.phase === 'anonymous' || snapshot.phase === 'reauthenticate') return
       invalidate()
-      publish('unavailable')
+      waiting('unavailable')
     },
     online: () => {
       const returned = offline
       offline = false
       if (snapshot.phase !== 'unavailable' && snapshot.phase !== 'recovering' && snapshot.phase !== 'ready') return
+      if (!returned && snapshot.access === 'active') return
       if (!returned && attempts >= MAX_ATTEMPTS) return
       if (returned) attempts = 0
       if (running && returned) queued = true
       else requestCheck()
     },
-    foreground() {
-      if (snapshot.phase === 'ready' || (snapshot.phase === 'unavailable' && attempts < MAX_ATTEMPTS)) {
-        deniedPaths.clear()
-        requestCheck()
-      }
-    },
+    foreground: checkOnReturn,
+    groupsChanged: () => requestCheck(),
     retry: () => {
       if (running || !online()) return
       attempts = 0
