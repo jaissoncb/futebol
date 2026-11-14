@@ -55,6 +55,10 @@ jobs:
 
       - name: Test
         run: pnpm test
+      - name: Test workspace resume in Chrome
+        run: |
+          pnpm build:dev
+          node scripts/test-resume-browser.mjs
 
       - name: Test bundle and workflow security
         run: |

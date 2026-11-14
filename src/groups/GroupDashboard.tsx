@@ -307,7 +307,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
             <button type="button" aria-controls={`${sectionPrefix}-players`} onClick={() => goTo('players')}>Elenco</button>
             <button type="button" aria-controls={`${sectionPrefix}-history`} onClick={() => goTo('history')}>Histórico</button>
           </nav>
-          <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status">Carregando partidas…</p>}>
+          <MatchModuleBoundary key={selectedGroup.id}><Suspense fallback={<p role="status" data-loading-workspace>Carregando partidas…</p>}>
             <MatchWorkspace key={`${selectedGroup.id}:${canManagePlayers}:${scope?.grant ?? ""}`} client={client} group={selectedGroup} players={selectedPlayers} scope={scope} requireDurable={drafts !== undefined} gameId={`${sectionPrefix}-game`} historyId={`${sectionPrefix}-history`} onAttemptChange={setMatchAttemptPending} onDraftChange={setMatchDraftDirty} authorizationVersion={authorization.version} />
           </Suspense></MatchModuleBoundary>
 

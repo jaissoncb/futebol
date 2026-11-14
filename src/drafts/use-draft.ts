@@ -55,10 +55,10 @@ export function useDraftRecord<T>(scope: DraftScope | null | undefined, kind: Dr
   const [record, setRecord] = useState<OpenDraft<T>>(scope ? { state: 'loading' } : { state: 'ready', initial: null })
   const [status, setStatus] = useState<DraftStatus>('idle')
   const [load, setLoad] = useState(0)
-  const { environment, userId, groupId, epoch, grant } = scope ?? {}
+  const { environment, userId, groupId, epoch, grant, signal } = scope ?? {}
   useEffect(() => {
     if (!environment || !userId || !groupId || !epoch || !grant) return
-    const current = { environment, userId, groupId, epoch, grant }
+    const current = { environment, userId, groupId, epoch, grant, signal }
     let active = true
     void readDraft(current, kind, validate).then(snapshot => {
       if (!active) return
@@ -69,7 +69,7 @@ export function useDraftRecord<T>(scope: DraftScope | null | undefined, kind: Dr
       if (active) setRecord({ state: 'error', issue: draftIssue(error) })
     })
     return () => { active = false }
-  }, [environment, userId, groupId, epoch, grant, kind, validate, load])
+  }, [environment, userId, groupId, epoch, grant, signal, kind, validate, load])
 
   function reload() {
     setRecord({ state: 'loading' })

@@ -65,7 +65,11 @@ export function GameFlow({ group, players, client = null, onSaved, onAttemptChan
   const submitting = useRef(false)
   const drawing = useRef(false)
   const heading = useRef<HTMLHeadingElement>(null)
-  useEffect(() => { heading.current?.focus() }, [step, error, saveState])
+  const mountedHeading = useRef(false)
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: !mountedHeading.current })
+    mountedHeading.current = true
+  }, [step, error, saveState])
   useEffect(() => {
     if (writer && saveState !== 'saving') return
     if (!dirty && saveState !== 'saving' && saveState !== 'error') return

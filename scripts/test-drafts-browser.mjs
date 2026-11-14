@@ -160,6 +160,12 @@ try {
     await workspace.waitFor({ timeout: 20_000 })
   }
   async function reload(p = page) { await p.reload(); await login(p) }
+  async function reconnect() {
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('offline'))
+      window.dispatchEvent(new Event('online'))
+    })
+  }
   async function persist(p = page) { await draftSaved(p).first().waitFor({ timeout: 10_000 }) }
   async function hide(p = page) {
     await p.evaluate(() => {
@@ -324,11 +330,11 @@ try {
     await name().fill('Acesso removido')
     await persist()
     role = 'member'
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await reconnect()
     await page.getByText('Membro', { exact: true }).waitFor()
     await name().waitFor({ state: 'detached' })
     role = 'owner'
-    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await reconnect()
     await inputValue(name(), '')
     await name().fill('Descartar explicitamente')
     await persist()
