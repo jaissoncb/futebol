@@ -26,6 +26,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check PR head against current main
+        if: github.event_name == 'pull_request'
+        env:
+          FUTEBOL_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/git-preflight.mjs --pr
+
+      - name: Check release SHA against current main
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/git-preflight.mjs --release
+
       - name: Validate release request
         id: guard
         env:
@@ -64,6 +78,7 @@ jobs:
         run: |
           pnpm test:bundle-security
           pnpm test:workflow
+          node --test scripts/git-preflight.test.mjs
 
       - name: Build and verify Futebol
         run: pnpm build
@@ -136,6 +151,15 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Checkout release SHA
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Recheck current main before deploying
+        run: node scripts/git-preflight.mjs --release
+
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
