@@ -63,3 +63,15 @@ Não recriar esse serviço nem retornar à autenticação ou configuração anti
 Rollback de frontend não reverte o banco nem a Function. A API implantada e seus
 grants/RLS ficam preservados. Qualquer mudança remota de API, credenciais ou
 schema exige autorização própria; não executar inicializadores para rollback.
+
+## Base Git antes de desenvolver
+
+Confirme que o remote de leitura e escrita representa `jaissoncb/futebol`.
+Faça fetch da main e crie novas branches a partir de `origin/main`, em worktree
+ou clone isolado. Em checkouts que já têm o script, execute
+`node scripts/git-preflight.mjs` antes de editar e antes de integrar. O comando
+faz fetch novamente, exige que a ponta remota seja ancestral da branch,
+lista commits faltantes e bloqueia se houver alterações locais. Preserve a
+branch anterior e reconcilie em checkout limpo. Antes de publicar, rode
+`node scripts/git-preflight.mjs --release` no SHA integrado. O workflow verifica
+essa igualdade no começo e imediatamente antes do deploy.
