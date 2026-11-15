@@ -1,3 +1,5 @@
+import { WhatsAppImportControl } from './WhatsAppImport'
+import { ShareParticipants } from '../matches/ShareParticipants'
 import { type DetailsInput, type DrawAttempt, type GameStep, type MatchDraft } from '../drafts/models'
 import { useDraftAutosave, type DraftWriter } from '../drafts/use-draft'
 import { reconcileAttempt } from '../drafts/reconcile'
@@ -299,6 +301,8 @@ function Participants({ busy, config, error, players, selected, rules, rulesNoti
   return <div className="game-participants">
     <p className="game-summary">{config.teamCount} times · {config.playersOnCourt} em quadra por time · {DRAW_MODES[config.drawMode ?? 'classic'].label}</p>
     {config.avoidRecentRepeats && <p className="game-flow-note">Evitar repetições recentes está ativado.</p>}
+    <WhatsAppImportControl busy={busy} players={players} selected={selected}
+      onApply={(ids) => { if (ids.length) onSelectedChange([...selected, ...ids]) }} />
     <label className="search-field">Buscar participantes<input type="search" value={query} maxLength={80} placeholder="Nome ou apelido" disabled={busy} onChange={event => { event.stopPropagation(); setQuery(event.target.value) }} /></label>
     <div className="draw-actions">
       <button className="quiet-action" type="button" disabled={busy || !visible.length} onClick={() => onSelectedChange([...new Set([...selected, ...visible.map(p => p.id)])])}>{filtering ? `Selecionar encontrados (${visible.length})` : 'Selecionar todos'}</button>
@@ -311,6 +315,7 @@ function Participants({ busy, config, error, players, selected, rules, rulesNoti
     {!visible.length ? <p role="status">Nenhum jogador encontrado. Tente outro nome ou apelido.</p> : null}
     <p className="selection-count" aria-live="polite">{selected.length} jogadores selecionados{filtering ? ` · ${visible.length} encontrados` : ''}</p>
     {filtering && selected.some(id => !visibleIds.has(id)) ? <p className="game-flow-note">A busca não remove os jogadores já selecionados fora deste filtro.</p> : null}
+    {selected.length > 0 && <ShareParticipants config={config} players={players.filter((player) => selected.includes(player.id))} />}
     {rulesNotice && <p role="status">{rulesNotice}</p>}
     <RulesEditor rules={rules} players={players.filter(player => selected.includes(player.id))} teamCount={config.teamCount} busy={busy} onChange={onRulesChange} />
     <p className="game-flow-note">Mínimo de {config.teamCount} participantes. Todos entram em um time; times incompletos e reservas são permitidos.</p>

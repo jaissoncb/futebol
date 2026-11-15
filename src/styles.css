@@ -989,3 +989,16 @@ button, summary { touch-action: manipulation; }
 .draw-rules ul { display: grid; gap: 12px; margin: 0; padding-inline-start: 20px; }
 .draw-rules p { margin: 0; overflow-wrap: anywhere; }
 .draw-rules select { min-width: 0; }
+
+.whatsapp-import {
+  width: min(36rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 1rem;
+  border: 1px solid currentColor;
+  border-radius: 0.75rem;
+  overflow: auto;
+}
+
+.whatsapp-import::backdrop { background: rgb(0 0 0 / 55%); }
+.whatsapp-import textarea, .whatsapp-import select, .whatsapp-import input { width: 100%; min-width: 0; }
+.whatsapp-rows { display: grid; gap: 1rem; padding-inline-start: 1.5rem; }

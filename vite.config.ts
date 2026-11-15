@@ -19,6 +19,16 @@ export default defineConfig(({ mode }) => {
     envPrefix: [],
     define: frontendConfig ? { __FUTEBOL_FRONTEND_CONFIG__: JSON.stringify(frontendConfig) } : {},
     server: { watch: { ignored: ['**/dist-dev/**'] } },
+    build: {
+      rolldownOptions: {
+        output: {
+          // Tesseract resolves the language by its fixed basename.
+          assetFileNames: ({ names }) => names.includes('por.traineddata.gz')
+            ? 'assets/ocr-[hash]/[name][extname]'
+            : 'assets/[name]-[hash][extname]',
+        },
+      },
+    },
     plugins: [
       ...(publicEntry ? [{
         name: 'futebol-public-runtime-graph',
@@ -92,6 +102,7 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           cleanupOutdatedCaches: true,
+          globIgnores: ['**/tesseract-core-*.js', '**/worker.min-*.js'],
           globPatterns: ['**/*.{css,html,ico,js,png,svg,webmanifest}'],
           navigateFallback: '/index.html',
           navigateFallbackAllowlist: [/^\/$/],
