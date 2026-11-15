@@ -1,0 +1,3 @@
+# Tesseract ships the worker and runtime assets. Its donation prompt is optional.
+allowBuilds:
+  'tesseract.js': false
