@@ -30,11 +30,14 @@
   },
   "dependencies": {
     "@kinde-oss/kinde-auth-react": "5.13.1",
+    "@tesseract.js-data/por": "1.0.0",
     "jose": "6.2.12",
     "pg": "8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-router-dom": "7.18.3"
+    "react-router-dom": "7.18.3",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -1,6 +1,5 @@
-import { copySavedResult, savedResultText, shareSavedResult } from './share-result'
-import { saved } from './test-fixtures'
-
+import { copyMatchText, copySavedResult, participantListText, savedResultText, shareSavedResult } from './share-result'
+import { config, players, saved } from './test-fixtures'
 describe('compartilhamento textual salvo', () => {
   afterEach(() => vi.unstubAllGlobals())
   it('copia diretamente mesmo quando o compartilhamento nativo está disponível', async () => {
@@ -41,4 +40,19 @@ describe('compartilhamento textual salvo', () => {
     vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) } })
     await expect(shareSavedResult(saved)).rejects.toThrow('denied')
   })
+})
+
+it('copies the configured match and only its confirmed roster', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { clipboard: { writeText } })
+  try {
+    const text = participantListText(config, players.slice(0, 1))
+    expect(text).toContain('Futebol quinta\n12/09/2026 · 20:00')
+    expect(text).toContain('Participantes confirmados (1)\n1 - P1')
+    expect(text).not.toContain('Pessoa 2')
+    await copyMatchText(text)
+    expect(writeText).toHaveBeenCalledWith(text)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })

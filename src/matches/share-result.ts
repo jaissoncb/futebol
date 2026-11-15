@@ -1,3 +1,5 @@
+import type { GameConfig } from './draw-payload'
+import type { Player } from '../groups/group-service'
 import type { SavedMatch } from './match-service'
 
 export function formatMatchDate(value: string): string {
@@ -28,17 +30,39 @@ export function whatsAppResultUrl(saved: SavedMatch): string {
   return `https://wa.me/?text=${encodeURIComponent(savedResultText(saved))}`
 }
 
-export async function shareSavedResult(saved: SavedMatch): Promise<'shared' | 'copied' | 'cancelled'> {
-  const text = savedResultText(saved)
+export function participantListText(config: GameConfig, players: Player[]): string {
+  return [
+    config.name.trim() || 'Partida de futebol',
+    formatMatchDate(config.matchDate) + (config.matchTime ? ` · ${config.matchTime}` : ''),
+    `${config.teamCount} times · ${config.playersOnCourt} em quadra por time`,
+    '',
+    `Participantes confirmados (${players.length})`,
+    ...players.map((player, index) => `${index + 1} - ${player.nickname || player.name}`),
+  ].join('\n')
+}
+
+export async function copyMatchText(text: string): Promise<void> {
+  if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Cópia indisponível.')
+  await navigator.clipboard.writeText(text)
+}
+
+export async function shareMatchText(title: string, text: string): Promise<'shared' | 'copied' | 'cancelled'> {
   if (typeof navigator.share === 'function') {
-    try { await navigator.share({ title: saved.match.name || 'Partida de futebol', text }); return 'shared' }
-    catch (cause) { if (typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError') return 'cancelled' }
+    try {
+      await navigator.share({ title, text })
+      return 'shared'
+    } catch (cause) {
+      if (typeof cause === 'object' && cause !== null && 'name' in cause && cause.name === 'AbortError') return 'cancelled'
+    }
   }
-  await copySavedResult(saved)
+  await copyMatchText(text)
   return 'copied'
 }
 
-export async function copySavedResult(saved: SavedMatch): Promise<void> {
-  if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('Cópia indisponível.')
-  await navigator.clipboard.writeText(savedResultText(saved))
+export function shareSavedResult(saved: SavedMatch) {
+  return shareMatchText(saved.match.name || 'Partida de futebol', savedResultText(saved))
+}
+
+export function copySavedResult(saved: SavedMatch) {
+  return copyMatchText(savedResultText(saved))
 }
