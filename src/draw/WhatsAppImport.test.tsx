@@ -1,6 +1,7 @@
 import { ConfirmationSuspended } from '../useConfirmation'
 // @vitest-environment jsdom
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { group, players } from '../matches/test-fixtures'
 import { GameFlow } from './GameFlow'
@@ -26,24 +27,24 @@ describe('WhatsApp roster review', () => {
 
   it('adds a repeated player once, keeps an absent selection and excludes other groups', async () => {
     render(<GameFlow group={group} players={roster} />)
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' })) })
-    await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: /Bento/ })) })
+    await userEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: /Bento/ }))
     const review = openReview('1 - Ana\n1 - Ana\n3 - Cecília')
     expect(review.getByText(/Duplicidade/)).toBeInTheDocument()
     expect(review.getByText(/Ausentes.*Bento/)).toBeInTheDocument()
     expect(review.getByText('Jogador não encontrado')).toBeInTheDocument()
     expect(review.queryByRole('option', { name: 'Cecília' })).not.toBeInTheDocument()
-    await act(async () => { fireEvent.click(review.getByRole('button', { name: 'Confirmar 1 entrada(s)' })) })
+    await userEvent.click(review.getByRole('button', { name: 'Confirmar 1 entrada(s)' }))
     expect(screen.getByRole('checkbox', { name: /Ana/ })).toBeChecked()
     expect(screen.getByRole('checkbox', { name: /Bento/ })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'Voltar' }))
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' })) })
+    await userEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
     expect(screen.getByRole('checkbox', { name: /Ana/ })).toBeChecked()
   })
 
   it('drops unconfirmed review state on cancel and unmount', async () => {
     const view = render(<GameFlow group={group} players={roster} />)
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' })) })
+    await userEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
     fireEvent.click(openReview('1 - Ana').getByRole('button', { name: 'Cancelar importação' }))
     expect(screen.getByRole('checkbox', { name: /Ana/ })).not.toBeChecked()
     openReview('1 - Ana')
@@ -55,8 +56,8 @@ describe('WhatsApp roster review', () => {
       <GameFlow group={group} players={roster} />
     </ConfirmationSuspended.Provider>
     const view = render(flow(false))
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' })) })
-    await act(async () => { fireEvent.click(screen.getByRole('checkbox', { name: /Bento/ })) })
+    await userEvent.click(screen.getByRole('button', { name: 'Selecionar participantes' }))
+    await userEvent.click(screen.getByRole('checkbox', { name: /Bento/ }))
     openReview('1 - Ana')
     view.rerender(flow(true))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
