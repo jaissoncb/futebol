@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { DrawPlayer } from './engine'
+import { drawTeams, type DrawPlayer } from './engine'
 import { movePlayer, swapCourtStatus, swapPlayers, validateAdjustment, type AdjustmentState } from './adjustments'
 
 const players = new Map<string, DrawPlayer>([
@@ -49,8 +49,59 @@ describe('ajustes locais da Fase 6', () => {
     ] } })
   })
 
-  it('rejeita movimentação simples que deixaria os tamanhos inválidos', () => {
-    expect(movePlayer(state, 0, 'a', 1, players)).toEqual({ ok: false, message: 'O ajuste deixaria os times com tamanhos inválidos.' })
+  it('move entre dois times desiguais, promove a reserva e permite movimentos consecutivos e inversos', () => {
+    const moved = movePlayer(state, 0, 'a', 1, players)
+    if (!moved.ok) throw new Error(moved.message)
+    expect(moved.state.teams).toEqual([
+      { playerIds: ['g1', 'b'], reserveIds: [] },
+      { playerIds: ['g2', 'c', 'd', 'a'], reserveIds: ['d', 'a'] },
+    ])
+    const next = movePlayer(moved.state, 1, 'd', 0, players)
+    if (!next.ok) throw new Error(next.message)
+    const reversed = movePlayer(next.state, 1, 'a', 0, players)
+    if (!reversed.ok) throw new Error(reversed.message)
+    expect(reversed.state.teams).toEqual([
+      { playerIds: ['g1', 'b', 'd', 'a'], reserveIds: ['d', 'a'] },
+      { playerIds: ['g2', 'c'], reserveIds: [] },
+    ])
+    expect(swapPlayers(reversed.state, 0, 'b', 1, 'c', players).ok).toBe(true)
+    expect(swapCourtStatus(reversed.state, 0, 'b', 'a', players).ok).toBe(true)
+  })
+
+  it('rejeita mover o último jogador de um time', () => {
+    const twoTeams: AdjustmentState = { playersOnCourt: 2, teams: [
+      { playerIds: ['a'], reserveIds: [] }, { playerIds: ['b', 'c'], reserveIds: [] },
+    ] }
+    expect(movePlayer(twoTeams, 0, 'a', 1, players)).toEqual({ ok: false, message: 'O ajuste deixaria um time vazio.' })
+  })
+
+  it.each([
+    [9, 3, 3, [3, 3, 3], [4, 3, 2]],
+    [10, 3, 3, [4, 3, 3], [4, 4, 2]],
+    [11, 3, 4, [4, 4, 3], [5, 4, 2]],
+    [12, 4, 4, [4, 4, 4], [5, 4, 3]],
+    [13, 4, 4, [5, 4, 4], [5, 5, 3]],
+    [14, 4, 5, [5, 5, 4], [6, 5, 3]],
+    [15, 5, 5, [5, 5, 5], [6, 5, 4]],
+  ])('ajusta um sorteio automático de %i jogadores e preserva elenco, goleiros e reservas', (count, fromSize, toSize, initial, expected) => {
+    const roster = Array.from({ length: count }, (_, index) => ({
+      id: String(index + 1), skillRating: 1 + index % 9 / 2, isGoalkeeper: index < 3,
+    }))
+    const byId = new Map(roster.map(player => [player.id, player]))
+    const sizeOrder = (teams: AdjustmentState['teams']) => teams.map(team => team.playerIds.length).sort((a, b) => b - a)
+    const { teams } = drawTeams({ players: roster, teamCount: 3, playersOnCourt: 5, seed: `manual-${count}` })
+    expect(sizeOrder(teams)).toEqual(initial)
+    const from = teams.findIndex(team => team.playerIds.length === fromSize)
+    const to = teams.findIndex((team, index) => index !== from && team.playerIds.length === toSize)
+    const moving = teams[from]!.playerIds.find(id => !byId.get(id)!.isGoalkeeper)!
+    const result = movePlayer({ teams, playersOnCourt: 5 }, from, moving, to, byId)
+    if (!result.ok) throw new Error(result.message)
+    expect(sizeOrder(result.state.teams)).toEqual(expected)
+    expect(result.state.teams.flatMap(team => team.playerIds).sort()).toEqual(roster.map(player => player.id).sort())
+    for (const team of result.state.teams) {
+      expect(team.reserveIds).toHaveLength(Math.max(0, team.playerIds.length - 5))
+      expect(team.playerIds.filter(id => byId.get(id)!.isGoalkeeper && !team.reserveIds.includes(id))).toHaveLength(1)
+    }
   })
 
   it('troca titular e reserva no próprio time, mantendo a quantidade em quadra', () => {

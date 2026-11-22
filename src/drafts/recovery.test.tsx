@@ -80,13 +80,21 @@ it('recupera detalhes, seleção, regra, rodadas e ajuste após fechar o documen
   await screen.findByRole('heading', { name: 'Times sorteados' })
   await action.click(button('Novo sorteio'))
   await screen.findByText(/2 sorteio\(s\) nesta partida/)
-  await action.click(screen.getAllByRole('button', { name: /Selecionar para ajuste/ })[0]!)
-  await action.click(screen.getAllByRole('button', { name: 'Trocar titular/reserva' })[0]!)
+  const red = within(screen.getByRole('region', { name: 'Em quadra do Time Vermelho' }))
+  await action.click(red.getByRole('button', { name: /Selecionar para ajuste/ }))
+  await action.click(button('Mover selecionado para este time'))
   await screen.findByText(/Ajustado manualmente/)
   await savedLocally()
   const previous = await readDraft(f.scope, 'match', isMatchDraft)
   expect(previous.value).toMatchObject({ step: 'result', selected: players.map(p => p.id), rules: [{ kind: 'fixed', player: players[0]!.id, team: 0 }] })
   expect(previous.value?.runs).toHaveLength(2)
+  expect(previous.value?.adjustment?.teams.map(team => team.playerIds.length)).toEqual([3, 1])
+  const invalidRun = previous.value ? structuredClone(previous.value) : null
+  if (!invalidRun) throw new Error('Rascunho ausente')
+  for (const [index, team] of invalidRun.runs[0]!.teams.entries()) {
+    Object.assign(team, invalidRun.adjustment!.teams[index])
+  }
+  expect(isMatchDraft(invalidRun, group.id)).toBe(false)
   view.unmount()
   f.mount()
   await screen.findByText(/Ajustado manualmente/)

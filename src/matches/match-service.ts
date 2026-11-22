@@ -42,6 +42,6 @@ export function validateSavedMatch(saved: SavedMatch): SavedMatch {
   const drawPlayers = new Map(saved.participants.map((row) => [row.player_id, {
     id: row.player_id, skillRating: Number(row.skill_rating_snapshot), isGoalkeeper: row.is_goalkeeper_snapshot,
   }]))
-  if (lineup.teams.some((team) => !team.playerIds.length) || validateAdjustment(lineup, drawPlayers)) throw new IncompleteSavedMatchError('Resultado salvo incompleto.')
+  if (validateAdjustment(lineup, drawPlayers)) throw new IncompleteSavedMatchError('Resultado salvo incompleto.')
   return saved
 }

@@ -7,6 +7,13 @@ FK de participantes para jogadores. Antes da API de exclusão, verifique grants,
 políticas e FKs reais em transação de leitura, aplique somente `006` após
 autorização explícita e verifique novamente. Em bancos existentes, não reaplique 001–005.
 
+`007_manual_team_sizes.sql` é incremental e substitui apenas a validação de
+tamanho no RPC `save_match_draw`. O sorteio automático mantém diferença máxima
+de um jogador. Um ajuste manual pode ampliar a diferença e precisa preservar
+times não vazios, titulares, reservas, goleiros e participantes únicos. A
+marcação `manual` do cliente descreve a atribuição. O RPC continua verificando
+a autorização da mesma forma. Confira corpo, owner e grants antes e depois.
+
 `futebol_owner`: NOLOGIN, sem superuser/BYPASSRLS/CREATEROLE/CREATEDB. Dono de schema/tabelas e das funções privilegiadas delimitadas. RLS está habilitada inclusive nas tabelas privadas; FORCE RLS não é usado para esse owner, porque bootstrap e helpers privilegiados precisam superar RLS para resolver identidade/evitar recursão. Nenhum login runtime pode assumir esse owner.
 
 `futebol_runtime`: NOLOGIN, sem DDL, ownership, BYPASSRLS ou capacidade administrativa. Um login de runtime separado recebe somente essa role. Grants explícitos de tabelas/colunas e funções; nenhum EXECUTE PUBLIC; grafo de partida somente SELECT e `save_match_draw`. Conexão runtime é segredo do backend. Migration usa outra identidade, jamais distribuída ao runtime/browser. Compatibilidade administrativa Neon validada no novo DEV em 18/10/2026.
