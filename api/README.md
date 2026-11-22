@@ -7,6 +7,22 @@
 > As etapas abaixo são registros históricos; referências a PRD não implantado
 > ou preparação pendente não descrevem o estado atual. Não repetir provisionamento.
 
+## Exclusão de grupo (candidato)
+
+`DELETE /groups/:id` exige Bearer validado e UUID; o cliente não envia corpo.
+Retorna `200 {"id":"<uuid>"}` após o commit. Um UUID inválido retorna
+`400 invalid_id`; grupo ausente, já excluído ou indisponível ao ator retorna o
+mesmo `404 unavailable`. Conflitos de lock/transação retornam `409 conflict`.
+CORS inclui DELETE para a origem configurada. Falhas inesperadas são sanitizadas.
+
+A rota usa `withActor`, requer a associação `owner` e preserva RLS. A migration
+`006_group_deletion.sql` é pré-requisito: apenas a transação da rota adia a
+verificação participante → jogador, para ambas as cascatas terminarem antes
+do commit. Em timeout, resposta malformada ou falha ambígua, o cliente consulta
+`GET /workspace` antes de permitir outra tentativa manual. Ausência na
+consulta pode significar perda de acesso; ela não comprova exclusão. Não há
+reenvio automático do DELETE.
+
 ## Local Neon Functions port (stage 1, not deployed)
 
 The explicit Function entrypoint is `api/function.ts`, a default object with

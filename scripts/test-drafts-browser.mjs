@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { chromium } from 'playwright'
+import { chromium, devices } from 'playwright'
 
 const real = process.argv.includes('--real')
 const write = process.argv.includes('--write-fixture')
+const deleteFixture = process.argv.includes('--delete-fixture')
 assert.ok(!write || real)
+assert.ok(!deleteFixture || !real, 'Deletion fixtures use synthetic HTTP only')
 const testGroup = 'FASE5A Mobile UX 2026-11-08'
 const fixtureName = 'FASE7C DEV ' + new Date().toISOString().replace(/[:.]/g, '-')
 const config = JSON.parse(await readFile('deployment/frontend-dev.json', 'utf8'))
@@ -36,7 +38,8 @@ let step = 'Chrome'
 const evidence = []
 try {
   browser = await chromium.launch({ channel: 'chrome' })
-  const context = await browser.newContext({ serviceWorkers: 'block' })
+  const context = await browser.newContext(deleteFixture
+    ? { ...devices['Pixel 7'], serviceWorkers: 'allow' } : { serviceWorkers: 'block' })
   let userId = profile
   let role = 'owner'
   let mutations = 0
@@ -48,12 +51,13 @@ try {
   let exposeGraph = true
   let realGroupId
   let realCommit
+  let deleted = false
   const jwt = () => {
     const now = Math.floor(Date.now() / 1000)
     return [{ alg: 'RS256', kid: 'fixture' }, { sub: userId, given_name: 'Fixture', iss: config.identity.domain, exp: now + 600, iat: now }, 'fixture']
       .map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.')
   }
-  const cors = { 'Access-Control-Allow-Origin': localOrigin, 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS', 'Access-Control-Allow-Headers': 'authorization,content-type' }
+  const cors = { 'Access-Control-Allow-Origin': localOrigin, 'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'authorization,content-type' }
   await context.route('**/*', async route => {
     const request = route.request()
     const url = new URL(request.url())
@@ -85,9 +89,16 @@ try {
       if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors })
       if (url.pathname === '/me') return reply({ id: userId })
       if (url.pathname === '/workspace') return reply({
-        groups: [{ id: group, name: 'Grupo sintético 7C', role, sport: 'futsal', default_players_on_court: 1 }],
-        players: fixturePlayers,
+        groups: deleted ? [] : [{ id: group, name: 'Grupo sintético 7C', role, sport: 'futsal', default_players_on_court: 1 }],
+        players: deleted ? [] : fixturePlayers,
       })
+      if (deleteFixture && request.method() === 'DELETE') {
+        assert.equal(url.pathname, `/groups/${group}`)
+        assert.equal(request.postData(), null)
+        mutations++
+        deleted = true
+        return reply({ id: group })
+      }
       if (request.method() === 'PUT') {
         mutations++
         const id = url.pathname.split('/')[2]
@@ -198,6 +209,36 @@ try {
   step = 'login e armazenamento'
   await page.goto(localOrigin)
   await login()
+  if (deleteFixture) {
+    step = 'PWA mobile: rascunho, diálogo, exclusão e segunda aba'
+    await page.evaluate(async () => { await navigator.serviceWorker.ready })
+    const oldTab = await context.newPage()
+    await oldTab.goto(localOrigin)
+    await login(oldTab)
+    await name().fill('Rascunho sintético descartável')
+    await persist()
+    await button('Ajustar grupo').tap()
+    await button('Excluir grupo').tap()
+    const dialog = page.getByRole('alertdialog', { name: 'Excluir grupo definitivamente?' })
+    await dialog.waitFor()
+    assert.ok((await dialog.textContent()).includes('Grupo sintético 7C'))
+    assert.equal(await dialog.getByRole('button', { name: 'Cancelar' }).evaluate(el => el === document.activeElement), true)
+    assert.equal(await dialog.getByRole('button', { name: 'Excluir definitivamente' }).isDisabled(), true)
+    await page.keyboard.press('Escape')
+    await dialog.waitFor({ state: 'hidden' })
+    await inputValue(name(), 'Rascunho sintético descartável')
+    assert.equal(mutations, 0)
+    await button('Excluir grupo').tap()
+    await dialog.getByLabel('Digite EXCLUIR').fill('EXCLUIR')
+    await dialog.getByRole('button', { name: 'Excluir definitivamente' }).tap()
+    for (const tab of [page, oldTab]) {
+      await tab.getByRole('heading', { name: 'Monte a sua pelada.' }).waitFor()
+      assert.equal(await name(tab).count(), 0)
+    }
+    assert.equal(mutations, 1)
+    evidence.push('Chrome mobile com service worker: Escape conserva o rascunho, EXCLUIR envia um DELETE e ambas as abas eliminam o grupo da interface.')
+    console.log(JSON.stringify({ mode: 'PWA mobile sintético', evidence, writes: mutations }))
+  } else {
   if (write) {
     step = 'selecionar o grupo DEV de homologação documentado'
     assert.ok(realGroupId)
@@ -371,6 +412,7 @@ try {
     evidence.push('IndexedDB indisponível: alerta visível e envio da partida bloqueado.')
   }
   console.log(JSON.stringify({ mode: real ? 'DEV real' : 'Chrome controlado', evidence, ...(real && { events }), ...(write && { fixtureName, writes: mutations, upstreamStatus: realCommit }) }, null, 2))
+  }
 } catch (error) {
   // Do not print URLs, selectors that include data, login fields or browser dumps.
   console.error(`FALHOU em ${step} (${error.name}). Cenários aprovados: ${evidence.join(' ')}`)

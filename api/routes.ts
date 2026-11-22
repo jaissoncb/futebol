@@ -52,9 +52,19 @@ async function changed(client: PoolClient, query: string, values: unknown[]) {
 }
 export function createDatabaseDispatch(pool: Pool) {
   return async (principal: Principal, method: string, url: URL, body: unknown) => {
+    const deletion = method === 'DELETE' && /^\/groups\/([^/]+)$/.exec(url.pathname)
+    const deletedGroupId = deletion ? id(deletion[1]) : null
     try {
       return await withActor(pool, principal, async (client, actorId) => {
         const path = url.pathname
+        if (deletedGroupId) {
+          // The roster cascade may run before the match/participant cascade.
+          // Keep the FK restrictive outside this one transaction.
+          await client.query('set constraints public.match_players_player_fk deferred')
+          return await changed(client, `delete from public.groups as g
+            where g.id=$1 and exists (select 1 from public.group_members m
+              where m.group_id=g.id and m.user_id=$2 and m.role='owner') returning g.id`, [deletedGroupId, actorId])
+        }
         if (path === '/me' && ['GET','POST'].includes(method)) {
           if (method === 'POST' && Object.keys(object(body, [])).length) throw new HttpError(400, 'invalid_fields')
           const profile = await client.query('select id, display_name from public.profiles where id=$1', [actorId])
@@ -114,8 +124,8 @@ export function createDatabaseDispatch(pool: Pool) {
     } catch (error) {
       const code = (error as { code?: string }).code
       if (code === '42501') throw new HttpError(403, 'forbidden')
-      if (code === '40001' || code === '23505') throw new HttpError(409, 'conflict')
-      if (code?.startsWith('22') || code?.startsWith('23')) throw new HttpError(400, 'invalid_input')
+      if (code === '40001' || code === '23505' || (deletedGroupId && ['40P01', '55P03'].includes(code ?? ''))) throw new HttpError(409, 'conflict')
+      if (!deletedGroupId && (code?.startsWith('22') || code?.startsWith('23'))) throw new HttpError(400, 'invalid_input')
       throw error
     }
   }

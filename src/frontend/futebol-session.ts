@@ -62,6 +62,7 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
   let mounts = 0
   const listeners = new Set<() => void>()
   const logoutFence = draftLogoutFence(config.environment)
+  const groupChangeKey = `futebol.groups.changed.${config.environment}`
 
   const token = () => session.memory.getSessionItem(StorageKeys.accessToken) as string | null
   const online = () => !offline && navigator.onLine !== false
@@ -328,7 +329,12 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
       else requestCheck()
     },
     foreground: checkOnReturn,
-    groupsChanged: () => requestCheck(),
+    groupsChanged: (deleted = false) => {
+      if (deleted) {
+        try { localStorage.setItem(groupChangeKey, crypto.randomUUID()) } catch { /* Server RLS remains authoritative. */ }
+      }
+      recheckGroups()
+    },
     retry: () => {
       if (running || !online()) return
       attempts = 0
@@ -336,7 +342,10 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
     },
     mount() {
       mounts++
+      const syncGroups = (event: StorageEvent) => { if (event.key === groupChangeKey && event.newValue) recheckGroups() }
+      window.addEventListener('storage', syncGroups)
       return () => {
+        window.removeEventListener('storage', syncGroups)
         mounts--
         queueMicrotask(() => {
           if (mounts) return
@@ -344,5 +353,12 @@ export function createFutebolSession(config: FutebolFrontendConfiguration, sessi
         })
       }
     },
+  }
+
+  function recheckGroups() {
+    if (running) {
+      queued = true
+      invalidate()
+    } else requestCheck()
   }
 }

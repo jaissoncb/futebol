@@ -1,15 +1,16 @@
 import { DraftReadError, DraftStatusMessage } from '../drafts/DraftStatus'
-import { isPlayerDraft, type PlayerDraft } from '../drafts/models'
-import { draftScope, type DraftAccess, type DraftScope } from '../drafts/store'
+import { isMatchDraft, isPlayerDraft, type PlayerDraft } from '../drafts/models'
+import { draftScope, readDraft, revokeDeletedGroup, type DraftAccess, type DraftScope } from '../drafts/store'
 import { useDraftAutosave, useDraftRecord, type DraftWriter } from '../drafts/use-draft'
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { FutebolDataClient } from '../lib/data-client'
+import { ApiError } from '../lib/api/client'
 import { MatchModuleBoundary } from './MatchModuleBoundary'
 import { GroupSwitcher } from './GroupSwitcher'
 import { readSelectedGroup, rememberSelectedGroup } from './selected-group'
 import { searchPlayers } from './player-search'
 import { ConfirmationDialog } from '../ConfirmationDialog'
-import { useConfirmation } from '../useConfirmation'
+import { ConfirmationSuspended, useConfirmation } from '../useConfirmation'
 import {
   createGroup,
   createPlayer,
@@ -32,7 +33,9 @@ interface GroupDashboardProps {
   onAttemptChange?: (pending: boolean) => void
   verifiedData?: GroupWorkspaceData
   drafts?: DraftAccess | null
-  onGroupsChanged?: () => void
+  onGroupsChanged?: (deleted?: boolean) => void
+  onDeletionBusy?: (busy: boolean) => void
+  environment?: 'dev' | 'prd'
 }
 
 const EMPTY_GROUP: GroupInput = { defaultPlayersOnCourt: 5, name: '', sport: 'futsal' }
@@ -54,13 +57,21 @@ const POSITION_LABELS: Record<PreferredPosition, string> = {
 }
 
 const ROLE_LABELS = { owner: 'Proprietário', admin: 'Administrador', member: 'Membro' } as const
-
-export function GroupDashboard(props: GroupDashboardProps) {
-  return <GroupDashboardContent key={props.userId} {...props} />
+function uncertain(error: unknown) {
+  return !(error instanceof ApiError && error.kind === 'http' && [400, 401, 403, 404, 409, 429].includes(error.status))
 }
 
-function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, drafts, onGroupsChanged }: GroupDashboardProps) {
+function storedDeletion(key: string) {
+  try { return sessionStorage.getItem(key) } catch { return null }
+}
+
+export function GroupDashboard(props: GroupDashboardProps) {
+  return <GroupDashboardContent key={`${props.environment}:${props.userId}`} {...props} />
+}
+
+function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, drafts, onGroupsChanged, onDeletionBusy, environment }: GroupDashboardProps) {
   const { confirm, dialogProps } = useConfirmation()
+  const suspended = useContext(ConfirmationSuspended)
   const sectionPrefix = useId()
   const [playerSearch, setPlayerSearch] = useState({ groupId: '', query: '' })
   const [groups, setGroups] = useState<GroupWithRole[]>([])
@@ -75,15 +86,24 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
   const [matchDraftDirty, setMatchDraftDirty] = useState(false)
   const [playerDraftDirty, setPlayerDraftDirty] = useState(false)
   const [formPending, setFormPending] = useState(false)
+  const [formUncertain, setFormUncertain] = useState(false)
+  const deletionKey = `futebol.delete.${environment ?? 'local'}.${userId}`
+  const [unverifiedDeletion, setUnverifiedDeletion] = useState(() => storedDeletion(deletionKey))
+  const [deletionBusy, setDeletionBusy] = useState(false)
+  const [deletionMessage, setDeletionMessage] = useState('')
+  const deletionInFlight = useRef(false)
+  const [removed, setRemoved] = useState<ReadonlySet<string>>(() => new Set())
+  const removeMessage = useRef<HTMLParagraphElement>(null)
   const [authorization, setAuthorization] = useState<{ data?: GroupWorkspaceData; version: number }>({ version: 0 })
   if (verifiedData && authorization.data !== verifiedData) {
     setAuthorization({ data: verifiedData, version: authorization.version + 1 })
-    setGroups(verifiedData.groups)
-    setPlayers(verifiedData.players)
+    const visible = verifiedData.groups.filter(group => !removed.has(group.id))
+    setGroups(visible)
+    setPlayers(verifiedData.players.filter(player => !removed.has(player.group_id)))
     setError(null)
     setLoading(false)
-    if (selectedGroupId && !verifiedData.groups.some(group => group.id === selectedGroupId)) {
-      setSelectedGroupId(verifiedData.groups[0]?.id ?? null)
+    if (selectedGroupId && !visible.some(group => group.id === selectedGroupId)) {
+      setSelectedGroupId(visible[0]?.id ?? null)
       setEditingPlayer(null)
       setPlayerDraftDirty(false)
       setShowSettings(false)
@@ -101,8 +121,16 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
       if (currentRole !== 'owner') setShowSettings(false)
     }
   }
-  const navigationLocked = matchAttemptPending || formPending
+  const deletionLocked = deletionBusy || Boolean(unverifiedDeletion)
+  const navigationLocked = matchAttemptPending || formPending || deletionLocked
   useEffect(() => { onAttemptChange?.(navigationLocked || matchDraftDirty || playerDraftDirty) }, [navigationLocked, matchDraftDirty, playerDraftDirty, onAttemptChange])
+  useEffect(() => { if (deletionMessage) removeMessage.current?.focus() }, [deletionMessage])
+  useEffect(() => {
+    if (!deletionBusy) return
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = true }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [deletionBusy])
   useEffect(() => {
     if (!loading && !error && (selectedGroupId || !verifiedData?.groups.length)) rememberSelectedGroup(userId, selectedGroupId)
   }, [userId, selectedGroupId, loading, error, verifiedData])
@@ -113,10 +141,10 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
     const preferred = readSelectedGroup(userId)
     void Promise.resolve().then(() => {
       if (!cancelled) setSelectedGroupId(current => current ??
-        verifiedData.groups.find(group => group.id === preferred)?.id ?? verifiedData.groups[0]?.id ?? null)
+        verifiedData.groups.find(group => group.id === preferred && !removed.has(group.id))?.id ?? verifiedData.groups.find(group => !removed.has(group.id))?.id ?? null)
     })
     return () => { cancelled = true }
-  }, [userId, verifiedData])
+  }, [userId, verifiedData, removed])
 
   const refresh = useCallback(async (preferredGroupId?: string) => {
     if (!client) {
@@ -135,19 +163,20 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
         && !await confirm({ title: 'Trocar de grupo?', message: 'Há alterações não salvas na partida. Trocar de grupo descarta este rascunho.', action: 'Descartar e trocar de grupo' })
         ? undefined : preferredGroupId
       const data = await loadGroupWorkspace(client)
-      setGroups(data.groups)
-      setPlayers(data.players)
-      if (preferred && preferred !== selectedGroupId && data.groups.some(group => group.id === preferred)) setMatchDraftDirty(false)
+      const visible = data.groups.filter(group => !removed.has(group.id))
+      setGroups(visible)
+      setPlayers(data.players.filter(player => !removed.has(player.group_id)))
+      if (preferred && preferred !== selectedGroupId && visible.some(group => group.id === preferred)) setMatchDraftDirty(false)
       setSelectedGroupId((current) => {
         const requested = preferred ?? current ?? readSelectedGroup(userId)
-        return data.groups.some((group) => group.id === requested) ? requested : (data.groups[0]?.id ?? null)
+        return visible.some((group) => group.id === requested) ? requested : (visible[0]?.id ?? null)
       })
     } catch {
       setError('Não foi possível carregar seus grupos. Tente novamente.')
     } finally {
       setLoading(false)
     }
-  }, [client, userId, selectedGroupId, matchDraftDirty, confirm, drafts])
+  }, [client, userId, selectedGroupId, matchDraftDirty, confirm, drafts, removed])
 
   useEffect(() => {
     if (verifiedData) return
@@ -191,6 +220,107 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
   const currentPlayer = editingPlayer === 'new' ? editingPlayer : selectedPlayers.find(player => player.id === editingPlayer?.id)
   const query = playerSearch.groupId === selectedGroupId ? playerSearch.query : ''
   const visiblePlayers = searchPlayers(selectedPlayers, query)
+  const canCheckDrafts = drafts === undefined || Boolean(scope)
+  const deletable = selectedGroup?.role === 'owner' && !navigationLocked && !formUncertain && !suspended && canCheckDrafts ? selectedGroup.id : null
+  const eligible = useRef<string | null>(null)
+  useLayoutEffect(() => { eligible.current = deletable; return () => { eligible.current = null } }, [deletable])
+  function setUnverified(id: string | null) {
+    try {
+      if (id) sessionStorage.setItem(deletionKey, id)
+      else sessionStorage.removeItem(deletionKey)
+    } catch { /* The mounted workspace still retains the pending outcome. */ }
+    setUnverifiedDeletion(id)
+  }
+
+  function removeGroupLocally(id: string, confirmed: boolean) {
+    if (confirmed) setRemoved(current => new Set([...current, id]))
+    setGroups(current => current.filter(group => group.id !== id))
+    setPlayers(current => current.filter(player => player.group_id !== id))
+    if (selectedGroupId === id) {
+      setSelectedGroupId(groups.find(group => group.id !== id)?.id ?? null)
+      setShowSettings(false)
+      setEditingPlayer(null)
+      setMatchAttemptPending(false)
+      setMatchDraftDirty(false)
+      setPlayerDraftDirty(false)
+    }
+  }
+
+  async function checkOutcome() {
+    if (!client || deletionInFlight.current || navigator.onLine === false) return
+    const target = unverifiedDeletion
+    deletionInFlight.current = true; setDeletionBusy(true); onDeletionBusy?.(true)
+    try {
+      const data = await loadGroupWorkspace(client)
+      if (!Array.isArray(data.groups) || !Array.isArray(data.players)) throw new Error('invalid_workspace')
+      const unavailable = target !== null && !data.groups.some(group => group.id === target)
+      if (unavailable) {
+        removeGroupLocally(target, false)
+        setDeletionMessage('O grupo não está mais disponível para esta conta. Não foi possível confirmar se foi excluído.')
+        if (drafts) {
+          try { await revokeDeletedGroup(drafts, target) } catch { /* The subsequent session check reconciles storage. */ }
+        }
+      } else if (target) {
+        setDeletionMessage('O grupo ainda estava disponível na consulta. Nenhuma exclusão foi reenviada.')
+      } else setDeletionMessage('Grupos e elenco consultados. Confira os dados antes de excluir.')
+      const available = data.groups.filter(group => !removed.has(group.id))
+      setGroups(available)
+      setPlayers(data.players.filter(player => available.some(group => group.id === player.group_id)))
+      setSelectedGroupId(current => available.some(group => group.id === current) ? current : available[0]?.id ?? null)
+      setUnverified(null)
+      setFormUncertain(false)
+      onGroupsChanged?.(unavailable)
+    } catch {
+      setDeletionMessage('Não foi possível verificar os grupos. Verifique a conexão e tente consultar novamente.')
+    } finally { deletionInFlight.current = false; setDeletionBusy(false); onDeletionBusy?.(false) }
+  }
+
+  async function deleteSelected() {
+    if (!client || !selectedGroup || deletable !== selectedGroup.id || deletionInFlight.current || navigator.onLine === false) return
+    const target = selectedGroup.id
+    if (!await confirm({
+      title: 'Excluir grupo definitivamente?',
+      message: `O grupo “${selectedGroup.name}”, seu elenco, seu histórico de partidas e seus rascunhos serão perdidos. Esta ação é irreversível. Cancele se precisar terminar ou guardar algum rascunho.`,
+      cancel: 'Cancelar', action: 'Excluir definitivamente', phrase: 'EXCLUIR',
+    }) || eligible.current !== target || deletionInFlight.current) return
+    deletionInFlight.current = true; setDeletionBusy(true); onDeletionBusy?.(true); setDeletionMessage('')
+    try {
+      try {
+        if (scope) {
+          const [match, player] = await Promise.all([readDraft(scope, 'match', isMatchDraft), readDraft(scope, 'player', isPlayerDraft)])
+          if (match.value?.attempt || player.value?.submitted) {
+            setDeletionMessage('Há um salvamento de partida ou jogador a conferir. Resolva a tentativa antes de excluir.')
+            return
+          }
+        }
+      } catch {
+        setDeletionMessage('Não foi possível verificar os rascunhos deste grupo. A exclusão não foi enviada.')
+        return
+      }
+      setUnverified(target)
+      await client.deleteGroup(target)
+      removeGroupLocally(target, true)
+      setUnverified(null)
+      setDeletionMessage('Grupo excluído definitivamente.')
+      if (drafts) {
+        try { await revokeDeletedGroup(drafts, target) }
+        catch { setDeletionMessage('Grupo excluído. Os rascunhos locais serão verificados na próxima sincronização.') }
+      }
+      onGroupsChanged?.(true)
+    } catch (cause) {
+      if (!uncertain(cause) && cause instanceof ApiError && cause.status !== 404) {
+        setUnverified(null)
+        setDeletionMessage(cause.status === 409 ? 'O grupo está sendo atualizado. A exclusão não foi concluída.' : 'A exclusão foi recusada. Verifique seu acesso e tente novamente.')
+      } else {
+        setDeletionMessage('Não foi possível confirmar a exclusão. Consulte o estado do grupo antes de tentar novamente.')
+      }
+    } finally { deletionInFlight.current = false; setDeletionBusy(false); onDeletionBusy?.(false) }
+  }
+
+  const deletionStatus = (deletionMessage || deletionLocked) && <div className="group-deletion-status">
+    <p ref={removeMessage} tabIndex={-1} role="status">{deletionBusy ? 'Operação do grupo em andamento…' : deletionMessage || 'Há uma exclusão a verificar.'}</p>
+    {unverifiedDeletion && !deletionBusy && <button className="secondary-action" type="button" onClick={() => void checkOutcome()}>Consultar estado do grupo</button>}
+  </div>
   function goTo(section: string) {
     const target = document.getElementById(`${sectionPrefix}-${section}`)
     target?.scrollIntoView?.({ behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
@@ -213,7 +343,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
 
   if (groups.length === 0) {
     return (
-      <section className="empty-workspace">
+      <>{deletionStatus}<section className="empty-workspace" inert={deletionLocked}>
         <div className="empty-icon" aria-hidden="true">＋</div>
         <p className="eyebrow">Seu primeiro grupo</p>
         <h1>Monte a sua pelada.</h1>
@@ -230,12 +360,12 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
         ) : (
           <button className="solid-action" type="button" onClick={() => setShowGroupForm(true)}>Criar grupo</button>
         )}
-      </section>
+      </section></>
     )
   }
 
   return (
-    <div className="workspace">
+    <>{deletionStatus}<div className="workspace" inert={deletionLocked}>
       <ConfirmationDialog {...dialogProps} />
       <section className="workspace-heading">
         <div>
@@ -252,7 +382,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
       {showGroupForm ? (
         <section className="panel compact-panel" aria-label="Novo grupo">
           <GroupForm
-            disabled={matchAttemptPending}
+            disabled={navigationLocked}
             client={client}
             initialValue={EMPTY_GROUP}
             onBusyChange={setFormPending}
@@ -287,10 +417,11 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
           {showSettings && selectedGroup.role === 'owner' ? (
             <section className="panel compact-panel" aria-label="Ajustes do grupo">
               <GroupForm
-            disabled={matchAttemptPending}
+                disabled={navigationLocked}
                 client={client}
                 groupId={selectedGroup.id}
                 onBusyChange={setFormPending}
+                onUncertain={() => setFormUncertain(true)}
                 initialValue={{
                   defaultPlayersOnCourt: selectedGroup.default_players_on_court,
                   name: selectedGroup.name,
@@ -299,6 +430,15 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
                 onCancel={() => setShowSettings(false)}
                 onSaved={async () => { setShowSettings(false); await refresh(selectedGroup.id) }}
               />
+              <div className="group-danger-zone">
+                <h3>Zona de perigo</h3>
+                <p>Excluir “{selectedGroup.name}” remove definitivamente seu elenco, histórico e rascunhos.</p>
+                {formUncertain && <p role="alert">Há um salvamento a conferir antes da exclusão.</p>}
+                {formUncertain && <button className="secondary-action" type="button" disabled={formPending || matchAttemptPending} onClick={() => void checkOutcome()}>Conferir salvamento</button>}
+                {!canCheckDrafts && <p>O armazenamento de rascunhos precisa estar disponível para excluir o grupo.</p>}
+                <button className="confirmation-discard" type="button" disabled={!client || !deletable}
+                  onClick={() => void deleteSelected()}>Excluir grupo</button>
+              </div>
             </section>
           ) : null}
 
@@ -335,6 +475,7 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
                 <PlayerForm key={currentPlayer.id} client={client} groupId={selectedGroup.id}
                   initialValue={playerToInput(currentPlayer)} playerId={currentPlayer.id}
                   onBusyChange={setFormPending} onCancel={() => setEditingPlayer(null)}
+                  onUncertain={() => setFormUncertain(true)}
                   onSaved={async () => { setEditingPlayer(null); await refresh(selectedGroup.id) }}
                 />
               </section>
@@ -366,11 +507,11 @@ function GroupDashboardContent({ client, userId, onAttemptChange, verifiedData, 
           </section>
         </>
       ) : null}
-    </div>
+    </div></>
   )
 }
 
-function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled = false, onBusyChange }: {
+function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled = false, onBusyChange, onUncertain }: {
   client: FutebolDataClient | null
   groupId?: string
   disabled?: boolean
@@ -378,6 +519,7 @@ function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled 
   onCancel: () => void
   onSaved: (groupId?: string) => Promise<void>
   onBusyChange?: (pending: boolean) => void
+  onUncertain?: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -400,7 +542,8 @@ function GroupForm({ client, groupId, initialValue, onCancel, onSaved, disabled 
     try {
       const savedGroupId = groupId ? (await updateGroup(client, groupId, input), groupId) : await createGroup(client, input)
       await onSaved(savedGroupId)
-    } catch {
+    } catch (cause) {
+      if (uncertain(cause)) onUncertain?.()
       setError('Não foi possível salvar o grupo. Confira os dados e tente novamente.')
     } finally {
       submitting.current = false; setBusy(false); onBusyChange?.(false)
@@ -487,7 +630,7 @@ function NewPlayerDraft({ scope, client, groupId, open, hidden, onDirty, onBusyC
   </section>
 }
 
-function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, onCancel, onSaved, onBusyChange }: {
+function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, onCancel, onSaved, onBusyChange, onUncertain }: {
   client: FutebolDataClient | null
   groupId: string
   initialValue: PlayerDraft
@@ -497,6 +640,7 @@ function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, 
   onCancel: () => void
   onSaved: () => Promise<void>
   onBusyChange: (pending: boolean) => void
+  onUncertain?: () => void
 }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -523,7 +667,8 @@ function PlayerForm({ client, groupId, initialValue, playerId, writer, onDirty, 
       else await createPlayer(client, groupId, input)
       setSaved(true)
       await onSaved()
-    } catch {
+    } catch (cause) {
+      if (uncertain(cause)) onUncertain?.()
       setError('Não foi possível salvar o jogador. Confira os dados e tente novamente.')
     } finally {
       submitting.current = false; setBusy(false); onBusyChange(false)

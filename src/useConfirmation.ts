@@ -7,6 +7,7 @@ export interface ConfirmationRequest {
   message: string
   action: string
   cancel?: string
+  phrase?: string
 }
 
 /** A cancelled/unmounted confirmation never authorizes the pending action. */

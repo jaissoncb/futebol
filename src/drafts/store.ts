@@ -29,6 +29,7 @@ type Account = {
   epoch: string
   fence: string | null
   groups: Record<string, string>
+  deleted?: Record<string, true>
 }
 type Key = [DraftEnvironment, string, string, DraftKind]
 type Row = { key: Key; schema: number; revision: number; value: unknown }
@@ -122,17 +123,38 @@ export function authorizeDrafts(environment: DraftEnvironment, userId: string, a
         return
       }
       const same = previous?.userId === userId && previous.fence === expectedFence
+      const deleted = same ? previous.deleted ?? {} : {}
+      const eligible = allowed.filter(group => !Object.hasOwn(deleted, group))
       if (prior && (!same || previous.epoch !== prior.epoch)) { fail(new DraftError('revoked')); return }
-      if (prior && same && allowed.some(group => prior.groups.has(group) && prior.groups.get(group) !== previous.groups[group])) {
+      if (prior && same && eligible.some(group => prior.groups.has(group) && prior.groups.get(group) !== previous.groups[group])) {
         fail(new DraftError('revoked'))
         return
       }
       const epoch = same ? previous.epoch : crypto.randomUUID()
-      const grants = new Map(allowed.map(group => [group,
+      const grants = new Map(eligible.map(group => [group,
         (same && Object.hasOwn(previous.groups, group) ? previous.groups[group] : undefined) ?? crypto.randomUUID()]))
       purge(tx, environment, key => same && key[1] === userId && grants.has(key[2]))
-      accounts.put({ key: [environment], userId, epoch, fence: expectedFence, groups: Object.fromEntries(grants) } satisfies Account)
+      accounts.put({ key: [environment], userId, epoch, fence: expectedFence, groups: Object.fromEntries(grants), deleted } satisfies Account)
       done({ environment, userId, epoch, groups: grants })
+    }
+  })
+}
+
+/** Fences stale reads and writes after a deletion or verified loss of access. */
+export function revokeDeletedGroup(access: Pick<DraftAccess, 'environment' | 'userId' | 'epoch'>, groupId: string) {
+  const { environment, userId, epoch } = access
+  return transaction<void>('readwrite', (tx, done) => {
+    const accounts = tx.objectStore('accounts')
+    const read = accounts.get([environment])
+    read.onsuccess = () => {
+      const account = read.result as Account | undefined
+      if (account?.userId === userId && account.epoch === epoch && account.fence === draftLogoutFence(environment)) {
+        delete account.groups[groupId]
+        account.deleted = { ...account.deleted, [groupId]: true }
+        accounts.put(account)
+        for (const kind of ['match', 'player'] as const) tx.objectStore('drafts').delete([environment, userId, groupId, kind])
+      }
+      done(undefined)
     }
   })
 }

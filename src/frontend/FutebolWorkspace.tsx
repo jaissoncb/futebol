@@ -12,35 +12,37 @@ import { useWorkspaceScroll } from './workspace-scroll'
 export function FutebolWorkspace({ workspace, access, sessionActions, onLogout, onReenter, loggingOut, environment, onGroupsChanged }: {
   workspace: Workspace | null; access: WorkspaceAccess; onLogout: () => Promise<void>; loggingOut: boolean
   onReenter?: () => Promise<void>
-  onGroupsChanged?: () => void
+  onGroupsChanged?: (deleted?: boolean) => void
   sessionActions: ReactNode; environment: 'dev' | 'prd'
 }) {
   const suspended = access !== 'active'
   const blocked = access === 'blocked'
   const [pending, setPending] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const content = useRef<HTMLDivElement>(null)
   const path = useLocation().pathname
   const height = useWorkspaceScroll(content, !blocked, workspace?.internalId, workspace?.data, path)
   const { confirm, dialogProps } = useConfirmation()
   async function logout() {
+    if (deleting) return
     if ((pending || !workspace) && !await confirm({ title: 'Sair sem salvar?', message: 'Sair apaga os rascunhos deste dispositivo. Uma partida enviada ainda pode aparecer no histórico.', action: 'Descartar e sair' })) return
     await onLogout()
   }
   return <div className="app-shell">
     <ConfirmationDialog {...dialogProps} />
-    <header className="topbar"><a className="brand" href="#/">⚽ Futebol</a>
+    <header className="topbar"><a className="brand" href="#/" aria-disabled={deleting} onClick={event => { if (deleting) event.preventDefault() }}>⚽ Futebol</a>
       {environment === 'dev' ? <span>DEV</span> : null}
-      <button className="quiet-action" disabled={loggingOut} onClick={() => void logout()}>Sair</button>
+      <button className="quiet-action" disabled={loggingOut || deleting} onClick={() => void logout()}>Sair</button>
     </header>
     <main className="main-content"><PwaUpdate pending={pending || suspended} />
       {sessionActions ? <div className="workspace-session-notice">
-        {sessionActions}{onReenter ? <button className="secondary-action" disabled={loggingOut} onClick={() => void onReenter()}>Entrar novamente com Sabará ID</button> : null}
+        {sessionActions}{onReenter ? <button className="secondary-action" disabled={loggingOut || deleting} onClick={() => void onReenter()}>Entrar novamente com Sabará ID</button> : null}
       </div> : null}
       <div style={blocked ? { minHeight: height } : undefined}>
         <div ref={content} hidden={blocked} inert={suspended} data-workspace-content>
           <ConfirmationSuspended.Provider value={suspended}>
             {workspace?.draftIssue && <DraftStatusMessage status={workspace.draftIssue} />}
-            {workspace && <GroupDashboard drafts={workspace.drafts} key={workspace.internalId} client={workspace.services} userId={workspace.internalId} onAttemptChange={setPending} verifiedData={workspace.data} onGroupsChanged={onGroupsChanged} />}
+            {workspace && <GroupDashboard drafts={workspace.drafts} key={workspace.internalId} client={workspace.services} userId={workspace.internalId} onAttemptChange={setPending} onDeletionBusy={setDeleting} environment={environment} verifiedData={workspace.data} onGroupsChanged={onGroupsChanged} />}
           </ConfirmationSuspended.Provider>
         </div>
       </div>
