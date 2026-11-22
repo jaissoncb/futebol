@@ -1,26 +1,32 @@
 # Futebol — publicação e rollback
 
 Frontend ativo: **https://futebol.sabara.org/**, GitHub Pages, raiz `/`.
-Referência efetivamente publicada, conforme auditoria de 08/11/2026:
-`7b314022eced7eab1e9f48bdf01c87da5b62a46d`, versão nominal `0.1.0`.
-O [run Pages 42366705868](https://github.com/jaissoncb/futebol/actions/runs/42366705868)
-concluiu em 07/11/2026, 11:06:57 UTC. O bundle observado foi
-`/assets/index-cLtShd5A.js`. A Fase 3A contém correções locais ainda não publicadas.
+Em 22/11/2026, o [run Pages 45056804064](https://github.com/jaissoncb/futebol/actions/runs/45056804064)
+publicou o SHA `593f491d8893444417a544b74792fa526bec5bf9`. O
+[PR #7](https://github.com/jaissoncb/futebol/pull/7) passou no `build`
+obrigatório e o preflight confirmou esse SHA na `main`.
 
 | Artefato do run | ID | Digest SHA256 |
 | --- | --- | --- |
-| futebol-pages-build | 13572426036 | `336ef35075ad9a509b649810f0669198541d70c021a940ff1b8a1d410ab8fafe` |
-| github-pages | 13572235792 | `ab9a2167d01c085f5ee03e3ebdf7901f9ecb637455c6f7153a9da790d7455911` |
+| futebol-pages-build | 14767627601 | `22dc63a815eed42a3d1d029d7dbd1d7f2435984ffc039f174606e30b63e8c06f` |
+| github-pages | 14768110845 | `88fbf389d06898d5f377ba9e325d4e01f376f643ea8b872e1b9e8559980bf2ed` |
 
-Use SHA/run/digest para identificar releases; `0.1.0` sozinho não os distingue.
-Essas evidências identificam o frontend. A revisão da Neon Function efetivamente
-implantada não foi obtida de forma independente, nem certificada pelo SHA Pages.
-Não houve download e comparação byte a byte de todos os recursos servidos.
+O Neon PRD ativou a implantação 2 de `futebolapi`, com o ZIP homologado no
+DEV de SHA-256 `2f565aea83e12d573461645591d8653cd1216a4ed594968957078acaff48f269`.
+A migration 006 foi aplicada em `futebol_prd` após conferir grants, RLS, as
+12 FKs do grafo e janela de restauração de seis horas. As conexões direta e
+pooled passaram na verificação após o commit.
+
+Antes do Pages, health retornou 200, o preflight de DELETE retornou 204 e a API
+recusou DELETE anônimo com 401. Uma sessão real confirmou workspace, lista e
+detalhe de histórico. Após o deploy, o smoke no Chrome mobile confirmou
+service worker ativo, login, histórico e o diálogo do proprietário. Escape
+cancelou o diálogo e o roteiro registrou zero escritas na API.
 
 Arquitetura atual e credenciais: [OPERATIONS.md](OPERATIONS.md).
 API PRD: Function `futebolapi`, Node 24, branch `br-divine-sun-badnm7ch` do
 projeto `futebol-prd`. Banco `futebol_prd`, login restrito
-`futebol_api_prd_functions`; migrations 001–005 já aplicadas. Não repetir.
+`futebol_api_prd_functions`, com migrations 001–006 aplicadas.
 
 ## Publicação de frontend
 
