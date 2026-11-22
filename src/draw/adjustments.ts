@@ -36,9 +36,8 @@ function promoteReserveIfNeeded(team: EditableTeam, playersOnCourt: number, play
 export function validateAdjustment(state: AdjustmentState, players: ReadonlyMap<string, DrawPlayer>): string | null {
   const all = state.teams.flatMap((team) => team.playerIds)
   if (new Set(all).size !== all.length) return 'Um jogador não pode estar em mais de um time.'
-  const sizes = state.teams.map((team) => team.playerIds.length)
-  if (Math.max(...sizes) - Math.min(...sizes) > 1) return 'O ajuste deixaria os times com tamanhos inválidos.'
   for (const team of state.teams) {
+    if (!team.playerIds.length) return 'O ajuste deixaria um time vazio.'
     if (team.reserveIds.some((id) => !team.playerIds.includes(id))) return 'A reserva precisa pertencer ao próprio time.'
     const expectedOnCourt = Math.min(state.playersOnCourt, team.playerIds.length)
     if (onCourtIds(team).length !== expectedOnCourt) return 'A quantidade de jogadores em quadra precisa ser mantida.'
@@ -79,9 +78,10 @@ export function movePlayer(state: AdjustmentState, fromIndex: number, playerId: 
   from.playerIds = from.playerIds.filter((id) => id !== playerId)
   from.reserveIds = from.reserveIds.filter((id) => id !== playerId)
   promoteReserveIfNeeded(from, next.playersOnCourt, players)
+  const destinationFull = onCourtIds(to).length >= next.playersOnCourt
   to.playerIds.push(playerId)
   // The player is initially a reserve only when the destination already has all court positions filled.
-  if (onCourtIds(to).length >= Math.min(next.playersOnCourt, to.playerIds.length)) to.reserveIds.push(playerId)
+  if (destinationFull) to.reserveIds.push(playerId)
   const issue = validateAdjustment(next, players)
   return issue ? { ok: false, message: issue } : { ok: true, state: next }
 }

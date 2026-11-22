@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GameFlow } from '../draw/GameFlow'
 import * as service from './match-service'
@@ -21,6 +21,47 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Salvar e aceitar sorteio' }))
   await screen.findByText(/Partida salva e sorteio aceito/)
 }
+
+it('move por arraste de 5/4/4 para 5/5/3, atualiza métricas, sorteia novamente e salva o ajuste no retry', async () => {
+  const user = userEvent.setup()
+  const roster = Array.from({ length: 13 }, (_, index) => ({
+    ...players[0]!, id: `b0000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+    name: `Atleta ${index + 1}`, nickname: null, skill_rating: 2 + index % 7 * 0.5, is_goalkeeper: index < 3,
+  }))
+  render(<GameFlow client={client} group={{ ...group, default_players_on_court: 5 }} players={roster} />)
+  await user.selectOptions(screen.getByLabelText('Times'), '3')
+  const region = await result(user)
+  const size = (count: number) => within(region).getAllByRole('article').filter(card => within(card).queryByText(new RegExp(`^${count} jogadores`)))
+  expect(size(4)).toHaveLength(2)
+  expect(size(5)).toHaveLength(1)
+  const move = () => {
+    const [source, target] = size(4)
+    const player = within(source!).getAllByRole('listitem').find(row => !row.textContent.includes('Goleiro'))!
+    fireEvent.dragStart(player, { dataTransfer: { setData: vi.fn() } })
+    fireEvent.drop(target!)
+    expect(size(5)).toHaveLength(2)
+    expect(size(3)).toHaveLength(1)
+    expect(within(region).getByRole('status')).toHaveTextContent('As métricas foram atualizadas.')
+  }
+  move()
+  await user.click(within(region).getByRole('button', { name: 'Novo sorteio' }))
+  await user.click(screen.getByRole('button', { name: 'Descartar ajustes e sortear' }))
+  await screen.findByText(/2 sorteio\(s\) nesta partida/)
+  expect(size(4)).toHaveLength(2)
+  expect(size(5)).toHaveLength(1)
+  move()
+  saveMock.mockRejectedValueOnce(new Error('timeout'))
+  await user.click(screen.getByRole('button', { name: 'Salvar e aceitar sorteio' }))
+  await screen.findByRole('alert')
+  await user.click(screen.getByRole('button', { name: 'Tentar salvar novamente' }))
+  await screen.findByText(/Partida salva e sorteio aceito/)
+  const [, id, payload] = saveMock.mock.calls[0]!
+  expect(saveMock.mock.calls[1]).toEqual([client, id, payload])
+  expect(payload.participants).toHaveLength(13)
+  expect(payload.teams.map(team => payload.assignments.filter(row => row.team_index === team.team_index).length).sort()).toEqual([3, 5, 5])
+  expect(payload.assignments.filter(row => row.assignment_source === 'manual')).toHaveLength(1)
+  expect(payload.draw_runs.map(run => run.accepted)).toEqual([false, true])
+})
 
 describe('persistência real no fluxo da Fase 7', () => {
   it('retira o aviso de saída somente após salvamento confirmado e notifica rascunho limpo', async () => {

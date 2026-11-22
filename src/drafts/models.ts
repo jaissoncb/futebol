@@ -93,6 +93,7 @@ function lineup(teams: unknown, settings: GameConfig, players: Map<string, DrawP
   if (!list(teams, 3) || teams.length !== settings.teamCount || !teams.every(value => team(value, withMetrics))) return false
   const all = teams.flatMap(entry => entry.playerIds)
   if (all.length !== players.size || !all.every(id => players.has(id))) return false
+  if (withMetrics && meanGap(teams.map(entry => entry.playerIds.length)) > 1) return false
   if (rules.length && settings.drawMode !== 'classic'
     && meanGap(teams.map(entry => entry.playerIds.filter(id => players.get(id)?.isGoalkeeper).length)) > 1) return false
   return !validateAdjustment({ teams, playersOnCourt: settings.playersOnCourt }, players) && !brokenRule(rules, teams)

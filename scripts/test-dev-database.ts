@@ -14,14 +14,16 @@ import { createApi } from '../api/server.ts'
 
 // Intentionally no environment DSN override: cannot accidentally target a remote DB.
 // Container is dedicated to this cycle, labelled, loopback-only and fictitious.
-const container = process.env.FUTEBOL_DISPOSABLE_DELETE_TEST === '1'
-  ? 'futebol-delete-local-20261115' : 'futebol-dev-kinde-neon-20261017'
+const disposable = process.env.FUTEBOL_DISPOSABLE_DELETE_TEST === '1'
+const container = disposable ? 'futebol-delete-local-20261115' : 'futebol-dev-kinde-neon-20261017'
 const label = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "project"}}', container], { encoding: 'utf8' }).trim()
 assert.equal(label, 'futebol-dev')
-const port = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim()
-assert.equal(port, '127.0.0.1:55432')
-const migration = new Pool({ host: '127.0.0.1', port: 55432, database: 'futebol_dev', user: 'postgres', max: 5 })
-const runtime = new Pool({ host: '127.0.0.1', port: 55432, database: 'futebol_dev', user: 'futebol_dev_login', max: 3 })
+const binding = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim()
+const port = Number(/^127\.0\.0\.1:(\d+)$/.exec(binding)?.[1])
+assert.ok(Number.isInteger(port) && port > 0 && port < 65536)
+if (!disposable) assert.equal(port, 55432)
+const migration = new Pool({ host: '127.0.0.1', port, database: 'futebol_dev', user: 'postgres', max: 5 })
+const runtime = new Pool({ host: '127.0.0.1', port, database: 'futebol_dev', user: 'futebol_dev_login', max: 3 })
 const principal = (subject: string) => ({ issuer: 'https://fixture.test', subject })
 const fixturePrefix = randomUUID()
 const owner = principal(`${fixturePrefix}:owner`), admin = principal(`${fixturePrefix}:admin`)
@@ -200,6 +202,44 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
       assert.equal((await fetch(`${base}/groups/${groupId}/matches/${matchId}`,{headers:outsiderAuth})).status,404)
       assert.equal((await fetch(`${base}/workspace`,{headers:outsiderAuth})).headers.get('cache-control'),'no-store')
     } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))}
+  })
+  await t.test('migration 007 preserves RPC security and history and accepts only manually adjusted unequal teams', async () => {
+    const rpc = () => migration.query(`select oid, proowner, prosecdef, proconfig, proacl,
+      pg_get_function_identity_arguments(oid) as args, pg_get_function_result(oid) as result
+      from pg_proc where oid='public.save_match_draw(uuid,jsonb)'::regprocedure`)
+    const before = await rpc()
+    const oldMatch = await migration.query('select * from public.matches where id=$1', [matchId])
+    const players = await as(owner, c => c.query<{id:string}>(`insert into public.players(group_id,name,is_goalkeeper)
+      select $1, 'Manual fixture ' || n, n <= 3 from generate_series(1,13) n order by n returning id`, [groupId]))
+    const assignments = players.rows.map(({ id: player_id }, index) => ({
+      player_id, team_index: index % 3 + 1, starts_as_reserve: false, assignment_source: 'draw',
+    }))
+    assignments[10] = { ...assignments[10], team_index: 3, assignment_source: 'manual' }
+    const manual = { ...payload, name: 'Manual fixture', team_count: 3, players_on_court: 5,
+      teams: [{ team_index: 1, name: 'Azul' }, { team_index: 2, name: 'Vermelho' }, { team_index: 3, name: 'Verde' }],
+      participants: players.rows.map(({ id: player_id }, index) => ({
+        player_id, player_name_snapshot: `Manual fixture ${index + 1}`, skill_rating_snapshot: 3, is_goalkeeper_snapshot: index < 3,
+      })), assignments }
+    const manualId = randomUUID()
+    const save = (value: typeof manual, id = randomUUID(), actor = owner) =>
+      as(actor, c => c.query<{id:string}>('select public.save_match_draw($1,$2::jsonb) as id', [id, JSON.stringify(value)]))
+    await rejected(save(manual, manualId), '22023')
+    await migration.query(await readFile(new URL('../database/007_manual_team_sizes.sql', import.meta.url), 'utf8'))
+    assert.deepEqual((await rpc()).rows, before.rows)
+    assert.deepEqual((await migration.query('select * from public.matches where id=$1', [matchId])).rows, oldMatch.rows)
+    const allDraw = assignments.map(row => ({ ...row, assignment_source: 'draw' }))
+    await rejected(save({ ...manual, assignments: allDraw }), '22023')
+    await rejected(save({ ...manual, assignments: assignments.map(row => row.team_index === 2 ? { ...row, team_index: 3 } : row) }), '22023')
+    await rejected(save({ ...manual, assignments: assignments.map((row, index) => index === 0 ? { ...row, team_index: 2 } : row) }), '22023')
+    await rejected(save({ ...manual, assignments: assignments.map((row, index) => index === 3 ? { ...row, starts_as_reserve: true } : row) }), '22023')
+    await rejected(save({ ...manual, assignments: [...assignments.slice(1), assignments[1]] }), '22023')
+    await rejected(save(manual, manualId, outsider), '42501')
+    const results = await Promise.all(Array.from({ length: 5 }, () => save(manual, manualId)))
+    assert.ok(results.every(result => result.rows[0]?.id === manualId))
+    await rejected(save({ ...manual, name: 'Different' }, manualId), '22023')
+    const sizes = await as(owner, c => c.query(`select t.team_index, count(*)::int as size from public.team_assignments a
+      join public.teams t on t.id=a.team_id where a.match_id=$1 group by t.team_index order by t.team_index`, [manualId]))
+    assert.deepEqual(sizes.rows, [{ team_index: 1, size: 5 }, { team_index: 2, size: 3 }, { team_index: 3, size: 5 }])
   })
   await t.test('owner-only deletion is atomic across the complete graph and concurrent writes', async () => {
     const dispatch = createDatabaseDispatch(runtime)

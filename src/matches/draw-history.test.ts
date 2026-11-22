@@ -2,22 +2,28 @@ import { loadDrawHistory } from './draw-history'
 import { IncompleteSavedMatchError, validateSavedMatch } from './match-service'
 import type { FutebolDataClient } from '../lib/data-client'
 import { group, saved } from './test-fixtures'
+import { savedResultText } from './share-result'
 
 const signal = new AbortController().signal
 
 it('uses final saved assignments and reserve flags, including manual changes', async () => {
   const edited = structuredClone(saved)
   const [first, second] = edited.assignments.filter(row => row.starts_as_reserve)
-  ;[first!.player_id, second!.player_id] = [second!.player_id, first!.player_id]
-  first!.assignment_source = 'manual'
+  second!.team_id = first!.team_id
+  second!.assignment_source = 'manual'
   const client = {
     history: vi.fn(() => Promise.resolve([edited.match, { ...edited.match, group_id: 'another' },
       { ...edited.match, match_date: '2026-09-13' }])),
     savedMatch: vi.fn(() => Promise.resolve(validateSavedMatch(edited))),
   }
   const snapshot = await loadDrawHistory(client as unknown as FutebolDataClient, group.id, '2026-09-12', '21:00', signal)
-  expect(snapshot[0]?.[0]?.reserveIds).toEqual([first!.player_id])
-  expect(snapshot[0]?.[1]?.reserveIds).toEqual([second!.player_id])
+  expect(snapshot[0]?.map(team => team.playerIds.length)).toEqual([3, 1])
+  expect(snapshot[0]?.[0]?.reserveIds).toEqual([first!.player_id, second!.player_id])
+  expect(snapshot[0]?.[1]?.reserveIds).toEqual([])
+  const moved = edited.participants.find(row => row.player_id === second!.player_id)!
+  const [firstTeam, secondTeam] = savedResultText(edited).split(`Time ${edited.teams[1]!.name}`)
+  expect(firstTeam).toContain(`— ${moved.player_nickname_snapshot || moved.player_name_snapshot}`)
+  expect(secondTeam).toContain('Reservas:\n— Nenhum')
   expect(client.history).toHaveBeenCalledTimes(1)
   expect(client.savedMatch).toHaveBeenCalledTimes(1)
 })
