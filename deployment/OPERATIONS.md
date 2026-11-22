@@ -1,10 +1,9 @@
 # Futebol — operação vigente
 
-Frontend publicado em 07/11/2026 e auditado em 08/11/2026 no SHA
-`7b314022eced7eab1e9f48bdf01c87da5b62a46d`, versão nominal `0.1.0`,
-run Pages `42366705868`; evidências e digests em [RELEASE.md](RELEASE.md).
-A Fase 3A não publica alterações. A revisão efetivamente implantada da Function
-não foi obtida independentemente; o SHA do frontend não a certifica.
+Frontend publicado em 22/11/2026 no SHA
+`593f491d8893444417a544b74792fa526bec5bf9`, run Pages `45056804064`.
+A API PRD usa a implantação 2 de `futebolapi`. Os digests e o smoke constam
+em [RELEASE.md](RELEASE.md).
 Frontend em GitHub Pages; Sabará ID/Kinde para identidade;
 API em Neon Functions; dados em Neon PostgreSQL. Nenhum serviço novo é necessário.
 
@@ -49,7 +48,17 @@ A Function PRD existente usa apenas:
 
 Nunca usar credencial administrativa como runtime. PRD usa
 `futebol_api_prd_functions`, com TLS verificado, grants explícitos e RLS.
-As migrations `database/001` a `005` já foram aplicadas; não repetir.
+As migrations `database/001` a `006` já foram aplicadas. A 006 mantém a
+FK participante → jogador imediata por padrão e permite adiá-la na transação
+de exclusão do grupo. Preserve o histórico das migrations aplicadas.
+
+O proprietário exclui grupos em Ajustes após digitar `EXCLUIR`. A exclusão
+remove o elenco, as partidas e seus registros relacionados. Se o resultado da
+solicitação for incerto, a interface exige uma nova consulta antes de oferecer
+outra tentativa. A janela de restauração do Neon PRD era de seis horas na
+publicação. Em incidente, use um ponto anterior à exclusão em um destino
+isolado para avaliar a recuperação seletiva. Um rollback do frontend ou da
+Function apenas volta o código.
 Segredos não pertencem a JSON versionado, `.env`, argumentos, logs, commits ou chat.
 Tokens do navegador ficam em memória; a transação OAuth temporária tem namespace
 Futebol e TTL. Não há cache de dados privados no service worker.
