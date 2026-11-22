@@ -77,7 +77,7 @@ export function createFetchHandler(dependencies: FetchDependencies): (request: R
         || [...url.searchParams.keys()].some(key => key.startsWith('__dev')
           || ['phase', 'mode', 'transport', 'trial', 'stabilize'].includes(key))) throw new HttpError(404, 'not_found')
       if (request.method === 'OPTIONS') {
-        headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT')
+        headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE')
         headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
         return jsonResponse(204, undefined, headers)
       }
@@ -97,7 +97,7 @@ export function createFetchHandler(dependencies: FetchDependencies): (request: R
       const principal = await dependencies.authenticate(authorization)
       const body = await readBody(request)
       if (request.signal.aborted) throw new HttpError(408, 'request_timeout')
-      if (!['GET', 'POST', 'PATCH', 'PUT'].includes(request.method)) throw new HttpError(404, 'not_found')
+      if (!['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method)) throw new HttpError(404, 'not_found')
       return jsonResponse(200, await dependencies.dispatch(principal, request.method, url, body), headers)
     } catch (error) {
       if (error instanceof AuthenticationError) {

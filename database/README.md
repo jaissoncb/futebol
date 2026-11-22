@@ -2,6 +2,11 @@
 
 Aplicar `001_identity.sql` → `002_domain.sql` → `003_security.sql` → `004_save_match_draw.sql` → `005_database_boundary.sql` somente em banco DEV novo/vazio confirmado. Cada arquivo é transacional. Nunca executar a série histórica Supabase. O schema conserva entidades, checks, FKs compostas, snapshots e hardening final do sorteio, com identidade/roles/ACL substituídos. A quinta migration revoga privilégios padrão PUBLIC de banco, inclusive TEMPORARY, e concede CONNECT explícito ao runtime.
 
+`006_group_deletion.sql` é incremental. Ela mantém imediata por padrão a
+FK de participantes para jogadores. Antes da API de exclusão, verifique grants,
+políticas e FKs reais em transação de leitura, aplique somente `006` após
+autorização explícita e verifique novamente. Em bancos existentes, não reaplique 001–005.
+
 `futebol_owner`: NOLOGIN, sem superuser/BYPASSRLS/CREATEROLE/CREATEDB. Dono de schema/tabelas e das funções privilegiadas delimitadas. RLS está habilitada inclusive nas tabelas privadas; FORCE RLS não é usado para esse owner, porque bootstrap e helpers privilegiados precisam superar RLS para resolver identidade/evitar recursão. Nenhum login runtime pode assumir esse owner.
 
 `futebol_runtime`: NOLOGIN, sem DDL, ownership, BYPASSRLS ou capacidade administrativa. Um login de runtime separado recebe somente essa role. Grants explícitos de tabelas/colunas e funções; nenhum EXECUTE PUBLIC; grafo de partida somente SELECT e `save_match_draw`. Conexão runtime é segredo do backend. Migration usa outra identidade, jamais distribuída ao runtime/browser. Compatibilidade administrativa Neon validada no novo DEV em 18/10/2026.

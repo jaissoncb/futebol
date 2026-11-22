@@ -39,7 +39,7 @@ export function createApiClient(baseUrl: string, getAccessToken: () => Promise<s
       for (const listener of closedListeners) listener()
       closedListeners.clear()
     },
-    async request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+    async request<T>(path: string, method = 'GET', body?: unknown, expectedStatus?: number): Promise<T> {
       if (suspended) throw new ApiError(401, 'local')
       const url = new URL(path, base)
       if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin || url.hash) throw new ApiError(400)
@@ -61,6 +61,7 @@ export function createApiClient(baseUrl: string, getAccessToken: () => Promise<s
         if (!requests.has(controller) || await getAccessToken() !== token || !requests.has(controller)) throw new ApiError(401, 'local')
         if (controller.signal.aborted) throw new ApiError(0, 'transport')
         if (!response.ok) throw new ApiError(response.status)
+        if (expectedStatus !== undefined && response.status !== expectedStatus) throw new ApiError(0, 'transport')
         return result as T
       } catch (cause) {
         if (!requests.has(controller)) throw new ApiError(401, 'local')

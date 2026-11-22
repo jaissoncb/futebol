@@ -24,6 +24,25 @@ function request(path = '/me', init: RequestInit = {}) { return new Request(`htt
 const syntheticBearer = 'Bearer a.b.c'
 const principal = { issuer: policy.issuer, subject: claims.sub }
 
+void test('authenticated DELETE dispatches the UUID path once, without a parsed body', async () => {
+  const id = 'e0000000-0000-0000-0000-000000000001'
+  const path = `/groups/${id}`
+  let calls = 0
+  const handler = createFetchHandler({ allowedOrigin: origin,
+    authenticate: () => Promise.resolve(principal),
+    dispatch: (actor, method, url, body) => {
+      calls++
+      assert.deepEqual([actor, method, url.pathname, body], [principal, 'DELETE', path, undefined])
+      return Promise.resolve({ id })
+    },
+  })
+  assert.equal((await handler(request(path, { method: 'DELETE' }))).status, 401)
+  const result = await handler(request(path, { method: 'DELETE', headers: { Origin: origin, Authorization: syntheticBearer } }))
+  assert.equal(result.status, 200)
+  assert.deepEqual(await result.json(), { id })
+  assert.equal(calls, 1)
+})
+
 void test('fetch uses the complete existing G3 chain before dispatch and keeps HTTP errors sanitized', async () => {
   let providerStatus = 200, providers = 0, dispatched = 0, sent = ''
   const handler = createFetchHandler({ allowedOrigin: origin,
@@ -74,7 +93,7 @@ void test('origin, preflight, health, duplicate Bearer and DEV controls cannot s
   assert.equal(health.status, 200); assert.deepEqual(await health.json(), { status: 'ok' })
   const preflight = await handler(request('/me', { method: 'OPTIONS', headers: { Origin: origin } }))
   assert.equal(preflight.status, 204); assert.equal(await preflight.text(), '')
-  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, PATCH, PUT')
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, PATCH, PUT, DELETE')
   assert.equal(preflight.headers.get('access-control-allow-headers'), 'Authorization, Content-Type')
   const denied = await handler(request('/me', { headers: { Origin: 'https://other.test', Authorization: syntheticBearer } }))
   assert.equal(denied.status, 403); assert.equal(denied.headers.get('access-control-allow-origin'), null)

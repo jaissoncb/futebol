@@ -14,7 +14,8 @@ import { createApi } from '../api/server.ts'
 
 // Intentionally no environment DSN override: cannot accidentally target a remote DB.
 // Container is dedicated to this cycle, labelled, loopback-only and fictitious.
-const container = 'futebol-dev-kinde-neon-20261017'
+const container = process.env.FUTEBOL_DISPOSABLE_DELETE_TEST === '1'
+  ? 'futebol-delete-local-20261115' : 'futebol-dev-kinde-neon-20261017'
 const label = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "project"}}', container], { encoding: 'utf8' }).trim()
 assert.equal(label, 'futebol-dev')
 const port = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim()
@@ -34,15 +35,15 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
   t.after(async () => { await runtime.end(); await migration.end() })
   assert.equal((await migration.query<Record<string, unknown>>('select current_database() as name')).rows[0].name, 'futebol_dev')
   const initialized = (await migration.query<Record<string, unknown>>("select to_regclass('private.app_users') as id")).rows[0].id
-  if (!initialized) {
-    assert.equal((await migration.query<Record<string, unknown>>("select count(*)::int as count from pg_tables where schemaname='public'")).rows[0].count, 0)
-    for (const name of ['001_identity','002_domain','003_security','004_save_match_draw']) {
-      await migration.query<Record<string, unknown>>(await readFile(new URL(`../database/${name}.sql`, import.meta.url), 'utf8'))
-    }
-    await migration.query<Record<string, unknown>>('create role futebol_dev_login login inherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls')
-    await migration.query<Record<string, unknown>>('grant futebol_runtime to futebol_dev_login')
+  assert.equal(initialized, null, 'Suite requires a new disposable database')
+  assert.equal((await migration.query<Record<string, unknown>>("select count(*)::int as count from pg_tables where schemaname='public'")).rows[0].count, 0)
+  for (const name of ['001_identity','002_domain','003_security','004_save_match_draw']) {
+    await migration.query<Record<string, unknown>>(await readFile(new URL(`../database/${name}.sql`, import.meta.url), 'utf8'))
   }
+  await migration.query('create role futebol_dev_login login inherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls')
+  await migration.query('grant futebol_runtime to futebol_dev_login')
   await migration.query(await readFile(new URL('../database/005_database_boundary.sql',import.meta.url),'utf8'))
+  await migration.query(await readFile(new URL('../database/006_group_deletion.sql',import.meta.url),'utf8'))
   await t.test('restricted runtime and no PUBLIC function execution/table leakage', async () => {
     await assertRuntimeRole(runtime)
     await assert.rejects(assertRuntimeRole(migration), /unsafe_runtime_role/)
@@ -183,6 +184,7 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
       .setProtectedHeader({alg:'RS256',kid:'fixture'}).sign(keys.privateKey)
     try {
       const before=await migration.query<{count:number}>('select count(*)::int as count from private.app_users')
+      assert.equal((await fetch(`${base}/groups/${groupId}`, { method: 'DELETE' })).status, 401)
       for(const claims of [{aud:'other-api'},{azp:'other-client'},{fixture_kind:'id'},{gty:['client_credentials']},{exp:now-60}]) {
         const response=await fetch(`${base}/me`,{headers:{Authorization:`Bearer ${await sign({...claims,sub:'must-not-provision'})}`}})
         assert.equal(response.status,401)
@@ -198,5 +200,51 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
       assert.equal((await fetch(`${base}/groups/${groupId}/matches/${matchId}`,{headers:outsiderAuth})).status,404)
       assert.equal((await fetch(`${base}/workspace`,{headers:outsiderAuth})).headers.get('cache-control'),'no-store')
     } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))}
+  })
+  await t.test('owner-only deletion is atomic across the complete graph and concurrent writes', async () => {
+    const dispatch = createDatabaseDispatch(runtime)
+    const call = (p: typeof owner, method: string, path: string, body?: unknown) => dispatch(p, method, new URL(path, 'http://localhost:8787'), body)
+    const assertStatus = (status: number) => (error: unknown) => (error as { status?: number }).status === status
+    const path = `/groups/${groupId}`
+    const other = await call(owner, 'POST', '/groups', { name: 'Preservado', sport: 'futsal', defaultPlayersOnCourt: 5 }) as { id: string }
+    await as(owner, c => c.query("insert into public.players(group_id,name) values($1,'Preservado')", [other.id]))
+    await rejected(as(owner,c => c.query("delete from public.players where group_id=$1", [groupId])), '42501')
+    await migration.query('update private.app_users set disabled_at=null where id=$1', [memberId!])
+    await as(owner, c => c.query("update public.group_members set role='admin' where group_id=$1 and user_id=$2", [groupId, adminId!]))
+    for (const principal of [admin, member, outsider]) await assert.rejects(call(principal, 'DELETE', path), assertStatus(404))
+    await assert.rejects(call(owner, 'DELETE', '/groups/not-a-uuid'), assertStatus(400))
+    const identities = await migration.query('select id from private.app_users order by id')
+    const profiles = await migration.query('select * from public.profiles order by id')
+    const graph = ['group_members','players','matches','match_players','teams','team_assignments','draw_runs']
+    for (const table of graph) assert.ok((await migration.query(`select 1 from public.${table} where group_id=$1`, [groupId])).rowCount)
+    let release!: () => void, ready!: () => void
+    const held = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { ready = resolve })
+    const competingSave = as(admin, async (c) => {
+      await c.query('select public.save_match_draw($1,$2::jsonb)', [randomUUID(), JSON.stringify(payload)])
+      ready()
+      await held
+    })
+    await Promise.race([started, competingSave])
+    const first = call(owner, 'DELETE', path)
+    const second = call(owner, 'DELETE', path)
+    const edit = call(owner, 'PATCH', path, { name: 'Em corrida', sport: 'futsal', defaultPlayersOnCourt: 5 })
+    const settled = Promise.allSettled([first, second, edit])
+    release()
+    await competingSave
+    const results = await settled
+    const deletes = results.slice(0, 2)
+    assert.equal(deletes.filter(result => result.status === 'fulfilled').length, 1, JSON.stringify(results))
+    for (const result of deletes) {
+      if (result.status === 'fulfilled') assert.deepEqual(result.value, { id: groupId })
+      else assert.ok(assertStatus(404)(result.reason))
+    }
+    if (results[2].status === 'rejected') assert.ok(assertStatus(404)(results[2].reason))
+    for (const table of graph) assert.equal((await migration.query(`select 1 from public.${table} where group_id=$1`, [groupId])).rowCount, 0)
+    await assert.rejects(call(admin, 'PUT', `/matches/${randomUUID()}/draw`, payload), assertStatus(403))
+    await assert.rejects(call(owner, 'DELETE', path), assertStatus(404))
+    assert.deepEqual((await migration.query('select id from public.groups')).rows, [{ id: other.id }])
+    assert.deepEqual((await migration.query('select group_id from public.players')).rows, [{ group_id: other.id }])
+    assert.deepEqual((await migration.query('select id from private.app_users order by id')).rows, identities.rows)
+    assert.deepEqual((await migration.query('select * from public.profiles order by id')).rows, profiles.rows)
   })
 })

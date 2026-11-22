@@ -31,6 +31,11 @@ export function createFutebolApiServices(baseUrl: string, getAccessToken: () => 
     async updateGroup(groupId: string, input: GroupInput) {
       await client.request(`/groups/${id(groupId)}`, 'PATCH', input)
     },
+    async deleteGroup(groupId: string) {
+      const target = id(groupId)
+      const response = await client.request<{ id: string }>(`/groups/${target}`, 'DELETE', undefined, 200)
+      if (response?.id !== target) throw new ApiError(0, 'transport')
+    },
     async createPlayer(groupId: string, input: PlayerInput) {
       await client.request(`/groups/${id(groupId)}/players`, 'POST', input)
     },

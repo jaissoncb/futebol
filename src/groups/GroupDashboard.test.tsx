@@ -6,6 +6,8 @@ import * as service from './group-service'
 import type { FutebolDataClient } from '../lib/data-client'
 import * as matches from '../matches/match-service'
 import { FutebolWorkspace } from '../frontend/FutebolWorkspace'
+import { ApiError } from '../lib/api/client'
+import { ConfirmationSuspended } from '../useConfirmation'
 
 vi.mock('../matches/match-service', async (original) => ({
   ...await original<typeof matches>(), loadMatchHistory: vi.fn(), loadSavedMatch: vi.fn(), saveMatchDraw: vi.fn(),
@@ -31,6 +33,114 @@ beforeEach(() => {
   sessionStorage.clear()
   vi.resetAllMocks()
   vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group], players: [player] })
+})
+
+it('exige EXCLUIR para o grupo exato; cancelar, Escape e fechar não enviam nenhuma escrita', async () => {
+  const user = userEvent.setup()
+  const deleteGroup = vi.fn().mockResolvedValue(undefined)
+  render(<GroupDashboard client={{ ...client, deleteGroup }} userId="user" />)
+  await act(() => vi.dynamicImportSettled())
+  await screen.findByLabelText(/Nome.*opcional/)
+  await user.click(await screen.findByRole('button', { name: 'Ajustar grupo' }))
+  const open = () => user.click(screen.getByRole('button', { name: 'Excluir grupo' }))
+  await open()
+  let dialog = screen.getByRole('alertdialog')
+  expect(dialog).toHaveAccessibleDescription(expect.stringContaining('“Quarta”'))
+  expect(within(dialog).getByRole('button', { name: 'Cancelar' })).toHaveFocus()
+  const input = within(dialog).getByLabelText('Digite EXCLUIR')
+  await user.type(input, 'excluir')
+  expect(within(dialog).getByRole('button', { name: 'Excluir definitivamente' })).toBeDisabled()
+  fireEvent(dialog, new Event('cancel', { cancelable: true }))
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Excluir grupo' })).toHaveFocus()
+  await open()
+  dialog = screen.getByRole('alertdialog')
+  await user.click(within(dialog).getByRole('button', { name: 'Cancelar' }))
+  await open()
+  fireEvent(screen.getByRole('alertdialog'), new Event('close'))
+  expect(deleteGroup).not.toHaveBeenCalled()
+  await open()
+  await user.type(screen.getByLabelText('Digite EXCLUIR'), 'EXCLUIR')
+  await user.click(screen.getByRole('button', { name: 'Excluir definitivamente' }))
+  expect(deleteGroup).toHaveBeenCalledExactlyOnceWith(group.id)
+  expect(await screen.findByRole('heading', { name: 'Monte a sua pelada.' })).toBeInTheDocument()
+  expect(screen.getByText('Grupo excluído definitivamente.')).toBeInTheDocument()
+})
+
+it.each(['admin', 'member'] as const)('não oferece exclusão para %s', async role => {
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [{ ...group, role }], players: [] })
+  render(<GroupDashboard client={client} userId="user" />)
+  await screen.findByRole('heading', { name: 'Quarta' })
+  expect(screen.queryByRole('button', { name: 'Ajustar grupo' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Excluir grupo' })).not.toBeInTheDocument()
+})
+
+it('bloqueia mudança de grupo e novo DELETE até verificar um resultado incerto, inclusive após remontar', async () => {
+  const user = userEvent.setup()
+  let rejectWrite!: (error: unknown) => void
+  const deleteGroup = vi.fn(() => new Promise<void>((_, reject) => { rejectWrite = reject }))
+  const api = { ...client, deleteGroup }
+  const other = { ...group, id: 'b', name: 'Domingo' }
+  const otherPlayer = { ...player, id: 'p2', group_id: other.id, name: 'Bia' }
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [group, other], players: [player, otherPlayer] })
+  const view = render(<GroupDashboard client={api} userId="user" />)
+  await user.click(await screen.findByRole('button', { name: 'Ajustar grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Excluir grupo' }))
+  await user.type(screen.getByLabelText('Digite EXCLUIR'), 'EXCLUIR')
+  await user.click(screen.getByRole('button', { name: 'Excluir definitivamente' }))
+  expect(screen.getByRole('button', { name: 'Domingo' })).toBeDisabled()
+  await act(() => { rejectWrite(new ApiError(0, 'transport')); return Promise.resolve() })
+  expect(await screen.findByRole('button', { name: 'Consultar estado do grupo' })).toBeInTheDocument()
+  expect(deleteGroup).toHaveBeenCalledOnce()
+  view.unmount()
+  render(<GroupDashboard client={api} userId="user" />)
+  const check = await screen.findByRole('button', { name: 'Consultar estado do grupo' })
+  vi.mocked(service.loadGroupWorkspace).mockRejectedValueOnce(new ApiError(503))
+  await user.click(check)
+  expect(await screen.findByText(/Não foi possível verificar os grupos/)).toBeInTheDocument()
+  vi.mocked(service.loadGroupWorkspace).mockResolvedValue({ groups: [other], players: [otherPlayer] })
+  await user.click(screen.getByRole('button', { name: 'Consultar estado do grupo' }))
+  expect(await screen.findByRole('heading', { name: 'Domingo' })).toBeInTheDocument()
+  expect(screen.getByText('Bia')).toBeInTheDocument()
+  expect(screen.queryByText('Ana')).not.toBeInTheDocument()
+  expect(screen.getByText(/Não foi possível confirmar se foi excluído/)).toBeInTheDocument()
+  expect(deleteGroup).toHaveBeenCalledExactlyOnceWith(group.id)
+})
+
+it('aguarda o salvamento em Ajustes, então bloqueia exclusão até conferir a resposta incerta', async () => {
+  const user = userEvent.setup()
+  let rejectSave!: (error: unknown) => void
+  vi.mocked(service.updateGroup).mockImplementation(() => new Promise((_, reject) => { rejectSave = reject }))
+  const deleteGroup = vi.fn()
+  render(<GroupDashboard client={{ ...client, deleteGroup }} userId="user" />)
+  await user.click(await screen.findByRole('button', { name: 'Ajustar grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Salvar grupo' }))
+  expect(screen.getByRole('button', { name: 'Excluir grupo' })).toBeDisabled()
+  await act(() => { rejectSave(new ApiError(503)); return Promise.resolve() })
+  expect(screen.getByRole('button', { name: 'Excluir grupo' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: 'Conferir salvamento' }))
+  expect(screen.getByRole('button', { name: 'Excluir grupo' })).toBeEnabled()
+  expect(deleteGroup).not.toHaveBeenCalled()
+})
+
+it('fecha a confirmação se a sessão suspender e não envia exclusão quando offline', async () => {
+  const user = userEvent.setup()
+  const deleteGroup = vi.fn()
+  const api = { ...client, deleteGroup }
+  const workspace = (suspended: boolean) => <ConfirmationSuspended.Provider value={suspended}>
+    <GroupDashboard client={api} userId="user" />
+  </ConfirmationSuspended.Provider>
+  const view = render(workspace(false))
+  await user.click(await screen.findByRole('button', { name: 'Ajustar grupo' }))
+  await user.click(screen.getByRole('button', { name: 'Excluir grupo' }))
+  await user.type(screen.getByLabelText('Digite EXCLUIR'), 'EXCLUIR')
+  view.rerender(workspace(true))
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  view.rerender(workspace(false))
+  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+  await user.click(screen.getByRole('button', { name: 'Excluir grupo' }))
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(deleteGroup).not.toHaveBeenCalled()
 })
 
 afterEach(() => vi.restoreAllMocks())

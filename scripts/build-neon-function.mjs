@@ -7,14 +7,19 @@ import { dirname, resolve, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const tools = resolve(root, '.tools/neon-functions')
+const args = Object.fromEntries(process.argv.slice(2).map(arg => {
+  const match = /^--(tools-dir|source-manifest)=(.+)$/.exec(arg)
+  assert.ok(match, 'Expected --tools-dir=PATH or --source-manifest=PATH')
+  return [match[1], match[2]]
+}))
+const tools = resolve(root, args['tools-dir'] ?? '.tools/neon-functions')
 const requireTool = createRequire(resolve(tools, 'package.json'))
 const { buildFunctionBundle } = await import(pathToFileURL(requireTool.resolve('@neon/config-runtime/v1')).href)
 const { unzipSync } = requireTool('fflate')
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex')
 const json = async path => JSON.parse(await readFile(path, 'utf8'))
 assert.equal(process.versions.node.split('.')[0], '24', 'Node 24 is required')
-const baseline = await json(resolve(root, 'deployment/neon-dev.sources.json'))
+const baseline = await json(resolve(root, args['source-manifest'] ?? 'deployment/neon-dev.sources.json'))
 async function checkSources() {
   for (const file of baseline) assert.equal(sha256(await readFile(resolve(root, file.path))), file.sha256, `Changed stage-1 file: ${file.path}`)
 }
@@ -41,6 +46,8 @@ const inputs = Object.keys(result.metafile.inputs).map(path => path.replaceAll('
 const expected = ['auth', 'database', 'fetch-handler', 'function', 'g3', 'http-error', 'routes', 'runtime-config', 'transport-category']
 const ownInputs = inputs.filter(path => !path.includes('node_modules/')).map(path => path.replaceAll('\\', '/').split('/').slice(-2).join('/')).sort()
 assert.deepEqual(ownInputs, expected.map(name => `api/${name}.ts`).sort())
+if (args['source-manifest']) assert.ok(ownInputs.every(path => baseline.some(file => file.path === path)),
+  'The candidate manifest must cover every first-party input')
 assert.ok(inputs.some(path => /node_modules\/pg\/lib\/index\.js$/.test(path)))
 assert.ok(inputs.some(path => /node_modules\/jose\/dist\/webapi\/jwt\/verify\.js$/.test(path)))
 assert.ok(!inputs.some(path => /\.node$|\/scripts\/|_Handoff|\.env(?:\.|$)|runtime-dev|stabilization|userinfo-https/.test(path)))
@@ -78,7 +85,7 @@ const manifest = { entry: 'api/function.ts', slug: fn.slug, runtime: fn.runtime,
   files: Object.entries(entries).map(([name, bytes]) => ({ name, bytes: bytes.length, sha256: sha256(bytes) })),
   zip: { bytes: zip.length, sha256: sha256(zip) },
   dependencies: { pg: app.dependencies.pg, jose: app.dependencies.jose },
-  inputs, stage1Files: baseline,
+  inputs, [args['source-manifest'] ? 'candidateFiles' : 'stage1Files']: baseline,
   lockfiles: { application: sha256(await readFile(resolve(root, 'pnpm-lock.yaml'))), tools: sha256(await readFile(resolve(tools, 'package-lock.json'))) },
   checks: { onlyIndexMjs: true, forbiddenContent: 'PASS', inputGraph: 'PASS', exactGraphOutput: 'PASS',
     node24Import: 'PASS', emptyConfigFailsClosed: 'PASS', configuredHealthCorsAndAuth: 'PASS' },

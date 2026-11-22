@@ -40,7 +40,7 @@ export function createApi(dependencies: ApiDependencies) {
       if (origin && origin !== 'http://localhost:5173') throw new HttpError(403, 'origin_denied')
       if (origin) response.setHeader('Access-Control-Allow-Origin', origin)
       if (request.method === 'OPTIONS') {
-        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT')
+        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE')
         response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
         reply(response, 204, undefined); return
       }

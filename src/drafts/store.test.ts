@@ -1,5 +1,5 @@
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb'
-import { authorizeDrafts, discardCorruptDraft, draftScope, invalidateDrafts, readDraft, writeDraft } from './store'
+import { authorizeDrafts, discardCorruptDraft, draftScope, invalidateDrafts, readDraft, revokeDeletedGroup, writeDraft } from './store'
 import { isPlayerDraft } from './models'
 
 const player = { name: 'Ana', nickname: null, active: true, isGoalkeeper: false, preferredPosition: null, skillRating: 3 }
@@ -66,6 +66,21 @@ it('revoga o grant anterior e conserva os dados do grupo ainda autorizado', asyn
   await expect(authorizeDrafts('dev', 'u', ['a', 'b'], new AbortController().signal, access)).rejects.toMatchObject({ issue: 'revoked' })
   expect(await readDraft(draftScope(onlyB, 'b')!, 'player', isPlayerDraft)).toMatchObject({ value: player })
   expect(await readDraft(draftScope(await authorize(), 'a')!, 'player', isPlayerDraft)).toMatchObject({ value: null })
+})
+
+it('uma leitura antiga de workspace não reautoriza rascunhos de grupo excluído', async () => {
+  const oldTab = await authorize()
+  const prd = await authorize(['a'], 'u', 'prd')
+  const a = draftScope(oldTab, 'a')!, b = draftScope(oldTab, 'b')!, otherEnvironment = draftScope(prd, 'a')!
+  for (const scope of [a, b, otherEnvironment]) await writeDraft(scope, 'player', 0, player)
+  await revokeDeletedGroup(oldTab, 'a')
+  const stale = await authorizeDrafts('dev', 'u', ['a', 'b'], new AbortController().signal, oldTab)
+  expect(draftScope(stale, 'a')).toBeNull()
+  await expect(readDraft(a, 'player', isPlayerDraft)).rejects.toMatchObject({ issue: 'revoked' })
+  await expect(writeDraft(a, 'player', 1, player)).rejects.toMatchObject({ issue: 'revoked' })
+  for (const scope of [b, otherEnvironment]) {
+    expect(await readDraft(scope, 'player', isPlayerDraft)).toEqual({ revision: 1, value: player })
+  }
 })
 
 it('impede que autorização e escrita iniciadas antes do logout reabram o rascunho', async () => {

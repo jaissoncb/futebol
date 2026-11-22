@@ -6,6 +6,23 @@ import { group, matchId, payload, players, saved } from '../../matches/test-fixt
 import { ApiError } from './client'
 
 describe('domain services through Futebol API', () => {
+  it('sends one bodyless DELETE and requires a 200 acknowledgement for the exact UUID', async () => {
+    const transport = vi.fn<typeof fetch>()
+    const services = createFutebolApiServices('http://localhost:8787', () => Promise.resolve('fixture'), transport)
+    await expect(services.deleteGroup('../elsewhere')).rejects.toMatchObject({ status: 400 })
+    expect(transport).not.toHaveBeenCalled()
+    transport.mockResolvedValueOnce(Response.json({ id: group.id }, { status: 202 }))
+    await expect(services.deleteGroup(group.id)).rejects.toMatchObject({ kind: 'transport' })
+    transport.mockResolvedValueOnce(Response.json({ id: matchId }))
+    await expect(services.deleteGroup(group.id)).rejects.toMatchObject({ kind: 'transport' })
+    transport.mockResolvedValueOnce(Response.json({ id: group.id }))
+    await services.deleteGroup(group.id)
+    expect(transport).toHaveBeenCalledTimes(3)
+    for (const [url, options] of transport.mock.calls) {
+      expect((url as URL).pathname).toBe(`/groups/${group.id}`)
+      expect(options).toMatchObject({ method: 'DELETE', body: undefined })
+    }
+  })
   it('reuses existing domain calls, supplies only memory Bearer and never forwards user ID', async () => {
     const transport = vi.fn<typeof fetch>().mockImplementation((url) => Promise.resolve(Response.json(
       (url as URL).pathname === '/workspace' ? { groups: [group], players } : { id: group.id })))
