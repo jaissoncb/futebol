@@ -1,7 +1,7 @@
 # Futebol — operação vigente
 
 Frontend publicado em 22/11/2026 no SHA
-`593f491d8893444417a544b74792fa526bec5bf9`, run Pages `45056804064`.
+`5562474a5fd118d5220681bee389fe3f94e28e35`, run Pages `45065268165`.
 A API PRD usa a implantação 2 de `futebolapi`. Os digests e o smoke constam
 em [RELEASE.md](RELEASE.md).
 Frontend em GitHub Pages; Sabará ID/Kinde para identidade;
@@ -48,9 +48,12 @@ A Function PRD existente usa apenas:
 
 Nunca usar credencial administrativa como runtime. PRD usa
 `futebol_api_prd_functions`, com TLS verificado, grants explícitos e RLS.
-As migrations `database/001` a `006` já foram aplicadas. A 006 mantém a
+As migrations `database/001` a `007` já foram aplicadas. A 006 mantém a
 FK participante → jogador imediata por padrão e permite adiá-la na transação
-de exclusão do grupo. Preserve o histórico das migrations aplicadas.
+de exclusão do grupo. A 007 permite escalações manuais desiguais, preservando
+o limite de um jogador no sorteio automático e a exigência de times não
+vazios, titulares válidos e cobertura de goleiros. Preserve o histórico das
+migrations aplicadas.
 
 O proprietário exclui grupos em Ajustes após digitar `EXCLUIR`. A exclusão
 remove o elenco, as partidas e seus registros relacionados. Se o resultado da

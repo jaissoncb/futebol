@@ -1,6 +1,41 @@
 # Futebol — publicação e rollback
 
 Frontend ativo: **https://futebol.sabara.org/**, GitHub Pages, raiz `/`.
+Em 22/11/2026, o [PR #9](https://github.com/jaissoncb/futebol/pull/9)
+integrou o candidato homologado com árvore idêntica no SHA
+`5562474a5fd118d5220681bee389fe3f94e28e35`. O preflight de release e o
+[CI da main](https://github.com/jaissoncb/futebol/actions/runs/45063875929)
+passaram. O [run Pages 45065268165](https://github.com/jaissoncb/futebol/actions/runs/45065268165)
+publicou esse SHA no deployment `7984419501`.
+
+| Artefato do run | ID | Digest SHA-256 do pacote |
+| --- | --- | --- |
+| futebol-pages-build | 14771395962 | `bcf2539fa77a474d32826aca953d9647e3a8197baae4a9d71e1fdcb6bbcee633` |
+| github-pages | 14770758305 | `5f20e31786c025a89e97aa6e26766cb0476223f46115dda466fdc2cddde845c2` |
+
+O digest do conteúdo dos 21 arquivos foi
+`2585a4630796f87d8ab0a31927571ba1b3bbadfeac147b2ecaf16242bd6850db`.
+Os arquivos publicados coincidiram byte a byte com o build oficial. HTTPS
+retornou 200 e HTTP redirecionou com 301 para o domínio oficial.
+
+A migration `007_manual_team_sizes.sql` foi aplicada em `futebol_prd`
+antes do Pages, SHA-256
+`1b8cf1490be8f8b7c0647797ec2bce2f509818c3c59e61766306334310792bbe`.
+O RPC manteve assinatura, owner, SECURITY DEFINER, search_path e ACL.
+As políticas RLS e os dados existentes tiveram o mesmo digest antes e
+depois. A janela de recuperação era de seis horas. A Function
+`futebolapi` permaneceu na implantação 2.
+
+O smoke autenticado no Chrome, com Pixel 7 emulado, confirmou o service
+worker, sorteio 5/4/4, ajuste 5/5/3, novo sorteio equilibrado, salvamento,
+histórico e texto de compartilhamento. A fixture foi excluída pela rota
+oficial. A releitura preservou o workspace e o histórico preexistentes.
+A troca de worker de uma versão para a outra foi verificada em loopback
+com os dois artefatos oficiais. Para esta release, o proprietário dispensou
+uma estratégia especial de rollback após a gravação de escalas desiguais.
+
+## Publicação anterior — exclusão de grupos
+
 Em 22/11/2026, o [run Pages 45056804064](https://github.com/jaissoncb/futebol/actions/runs/45056804064)
 publicou o SHA `593f491d8893444417a544b74792fa526bec5bf9`. O
 [PR #7](https://github.com/jaissoncb/futebol/pull/7) passou no `build`
@@ -26,7 +61,7 @@ cancelou o diálogo e o roteiro registrou zero escritas na API.
 Arquitetura atual e credenciais: [OPERATIONS.md](OPERATIONS.md).
 API PRD: Function `futebolapi`, Node 24, branch `br-divine-sun-badnm7ch` do
 projeto `futebol-prd`. Banco `futebol_prd`, login restrito
-`futebol_api_prd_functions`, com migrations 001–006 aplicadas.
+`futebol_api_prd_functions`, com migrations 001–007 aplicadas.
 
 ## Publicação de frontend
 
