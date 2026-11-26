@@ -2,7 +2,7 @@ import { createTokenValidator } from './auth.ts'
 import { createRuntimePool } from './database.ts'
 import { createFetchHandler, jsonResponse } from './fetch-handler.ts'
 import { createUserinfoProof } from './g3.ts'
-import { createRestrictedDatabaseDispatch } from './routes.ts'
+import { createDatabaseReadiness, createPublicDrawLookup, createRestrictedDatabaseDispatch } from './routes.ts'
 import { readRuntimeConfig } from './runtime-config.ts'
 
 // Neon Functions entrypoint: default.fetch(Request). Nothing listens on a port.
@@ -19,8 +19,14 @@ export default {
         // pg can emit idle errors outside a request. Consume them without logging
         // raw errors/credentials; the next private operation still fails closed.
         pool.on('error', () => undefined)
+        const ready = createDatabaseReadiness(pool)
         handler = createFetchHandler({ allowedOrigin: config.allowedOrigin, authenticate,
-          dispatch: createRestrictedDatabaseDispatch(pool) })
+          dispatch: createRestrictedDatabaseDispatch(pool, ready),
+          lookupPublicDraw: createPublicDrawLookup(pool, ready),
+          purgeExpiredDraws: async () => {
+            await ready()
+            await pool.query('select futebol_sharing.purge_expired()')
+          } })
       } catch {
         return jsonResponse(503, { error: 'service_unavailable' })
       }

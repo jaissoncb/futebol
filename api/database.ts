@@ -24,12 +24,14 @@ export async function assertRuntimeRole(pool: Pool): Promise<void> {
     or not pg_has_role(current_user, 'futebol_runtime', 'MEMBER')
     or has_schema_privilege(current_user, 'public', 'CREATE')
     or has_schema_privilege(current_user, 'private', 'CREATE')
+    or exists (select 1 from pg_namespace where nspname='futebol_sharing'
+      and (nspowner=r.oid or has_schema_privilege(current_user, oid, 'CREATE')))
     or has_database_privilege(current_user, current_database(), 'CREATE')
     or has_database_privilege(current_user, current_database(), 'TEMPORARY')
     or exists (select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
-      where n.nspname in ('public','private') and c.relowner=r.oid)
+      where n.nspname in ('public','private','futebol_sharing') and c.relowner=r.oid)
     or exists (select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-      where n.nspname in ('public','private') and p.proowner=r.oid)
+      where n.nspname in ('public','private','futebol_sharing') and p.proowner=r.oid)
     or exists (select 1 from pg_roles elevated where elevated.rolname not in (current_user, 'futebol_runtime')
       and pg_has_role(current_user, elevated.oid, 'MEMBER'))
     or exists (select 1 from pg_roles inherited where inherited.rolname='futebol_runtime'
@@ -46,7 +48,12 @@ export async function assertDatabaseBoundary(pool: Pool): Promise<void> {
       where n.nspname in ('public','private') and c.relkind='r')
     and not exists(select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace,
       lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
-      where n.nspname in ('public','private') and a.grantee=0 and a.privilege_type='EXECUTE') as safe`)
+      where n.nspname in ('public','private','futebol_sharing') and a.grantee=0 and a.privilege_type='EXECUTE')
+    and not exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+      where n.nspname='futebol_sharing' and c.relkind='r'
+        and (not c.relrowsecurity or pg_get_userbyid(c.relowner)<>'futebol_owner'
+          or has_table_privilege(current_user, c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+          or has_any_column_privilege(current_user, c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'))) as safe`)
   if (result.rows[0]?.safe !== true) throw new Error('unsafe_database_boundary')
 }
 

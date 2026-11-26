@@ -24,6 +24,57 @@ function request(path = '/me', init: RequestInit = {}) { return new Request(`htt
 const syntheticBearer = 'Bearer a.b.c'
 const principal = { issuer: policy.issuer, subject: claims.sub }
 
+void test('public draw lookup is anonymous, exact, read-only, bounded and never cacheable', async () => {
+  const code = 'sorteio-a7r3t9'
+  const dto = { snapshot: { teams: [{ name: 'Azul', color: 'blue', players: [{ name: 'Júlia', reserve: false }] }] },
+    expiresAt: '2027-01-01T00:00:00Z' }
+  let authenticated = 0, lookups = 0, time = 0
+  const handler = createFetchHandler({ allowedOrigin: origin, now: () => time,
+    authenticate: () => { authenticated++; return Promise.resolve(principal) },
+    dispatch: () => Promise.reject(new Error('private dispatch called')),
+    lookupPublicDraw: (slug) => { lookups++; return Promise.resolve(slug === code ? dto : null) },
+  })
+  const success = await handler(request('/shared-draw?id=' + code, { headers: { Origin: origin } }))
+  assert.equal(success.status, 200)
+  assert.equal(success.headers.get('cache-control'), 'no-store')
+  assert.equal(success.headers.get('referrer-policy'), 'no-referrer')
+  assert.match(success.headers.get('x-robots-tag') ?? '', /noindex/)
+  assert.deepEqual(await success.json(), dto)
+  for (const url of ['/shared-draw', '/shared-draw?id=WRONG', '/shared-draw?id=x&id=' + code, '/shared-draw?query=' + code]) {
+    assert.equal((await handler(request(url))).status, 404)
+  }
+  assert.equal((await handler(request('/shared-draw?id=' + code, { method: 'PUT' }))).status, 404)
+  assert.equal(lookups, 1)
+  for (let i = 0; i < 34; i++) {
+    const missing = await handler(request('/shared-draw?id=sorteio-222222'))
+    assert.equal(missing.status, 404)
+    assert.deepEqual(await missing.json(), { error: 'publication_unavailable' })
+  }
+  const limited = await handler(request('/shared-draw?id=' + code, { headers: { 'X-Forwarded-For': '127.0.0.1' } }))
+  assert.equal(limited.status, 429)
+  assert.equal(limited.headers.get('retry-after'), '60')
+  assert.equal((await handler(request('/health'))).status, 200)
+  assert.equal(authenticated, 0)
+  time += 60000
+  assert.equal((await handler(request('/shared-draw?id=' + code))).status, 200)
+})
+
+void test('expiration cleanup requires a server-injected Neon trigger header and a POST', async () => {
+  let purges = 0
+  const handler = createFetchHandler({ allowedOrigin: origin,
+    authenticate: () => Promise.reject(new Error('authentication called')),
+    dispatch: () => Promise.reject(new Error('private dispatch called')),
+    purgeExpiredDraws: () => { purges++; return Promise.resolve() },
+  })
+  const path = '/maintenance/expired-draws'
+  const headers = { 'X-Neon-Trigger-Invocation-Id': 'synthetic-trigger' }
+  assert.equal((await handler(request(path, { method: 'POST' }))).status, 404)
+  assert.equal((await handler(request(path, { headers }))).status, 404)
+  assert.equal((await handler(request(path, { method: 'POST', headers: { ...headers, Origin: origin } }))).status, 404)
+  assert.equal((await handler(request(path, { method: 'POST', headers }))).status, 204)
+  assert.equal(purges, 1)
+})
+
 void test('authenticated DELETE dispatches the UUID path once, without a parsed body', async () => {
   const id = 'e0000000-0000-0000-0000-000000000001'
   const path = `/groups/${id}`

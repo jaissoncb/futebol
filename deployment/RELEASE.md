@@ -85,6 +85,32 @@ reconfiguração. Nenhuma variável ou secret Supabase é necessária ao workflo
 Uma limpeza sem alteração necessária de comportamento pode ficar em branch,
 com commit e push de revisão, mantendo o deploy funcional atual.
 
+## Ordem de implantação do compartilhamento
+
+1. Homologar em DEV. Conferir o projeto, branch e banco Neon antes de aplicar
+   somente `008_public_draw_sharing.sql` em uma sessão com a identidade de
+   migration. Conferir a janela de restauração, o digest da migration, o
+   proprietário, RLS e grants. O schema novo mantém a API anterior compatível.
+2. Publicar a Function aprovada e registrar o ID da versão anterior e o
+   digest do pacote. Testar health, CORS, 401 de gerenciamento anônimo, 404
+   público para um endereço inexistente e respostas sem cache. Configurar o
+   agendamento de limpeza. Verificar que um cliente externo com o cabeçalho
+   de trigger recebe 404 e que a invocação do próprio Neon retorna 204.
+3. Validar isolamento de proprietário, publicação e revogação no DEV, com
+   dados fictícios. Registrar a limpeza das fixtures. Depois dos checks do PR,
+   conferir o SHA integrado com o preflight de release e repetir a ordem
+   migration, Function e teste da API no PRD.
+4. Publicar o Pages pelo dispatch oficial no SHA aprovado. Confirmar o
+   artefato `s/index.html`, abertura direta, recarga e sessão anônima.
+   Verificar a revogação por uma nova consulta e a ausência de cache de nomes.
+
+Em regressão só no painel do proprietário, reverta a alteração do painel e
+preserve a página estática enquanto a API estiver saudável. Em incidente de
+privacidade da API, suspenda a publicação, desative o agendamento ao voltar
+para a Function anterior e valide a indisponibilidade das consultas públicas.
+Preserve a migration e os endereços reservados. A limpeza de expirados pode
+continuar pela rotina SQL sob controle do operador.
+
 ## Rollback
 
 O ponto frontend confirmado pela auditoria é `7b314022eced7eab1e9f48bdf01c87da5b62a46d`,

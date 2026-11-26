@@ -110,6 +110,42 @@ existente. Não restaurar o Supabase excluído. Frontend, Function e schema são
 versionados separadamente; rollback de frontend não faz rollback de dados.
 Problemas de API/banco não autorizam executar inicializadores nem trocar secrets.
 
+## Compartilhamento público de sorteios
+
+O GitHub Pages serve `/s/index.html` em `/s/?id=<endereço>`. A página
+consulta `GET /shared-draw?id=<endereço>` na Function do mesmo ambiente,
+sem sessão, cookies ou credenciais Kinde. A API recusa consultas em lote
+e usa a mesma resposta 404 para endereço inválido, expirado ou revogado.
+Respostas usam `no-store`, `no-referrer` e `X-Robots-Tag`. O service worker
+pode guardar a página estática e seus assets. A escalação é consultada na rede.
+Nenhuma chamada precisa registrar o endereço ou nomes da escalação.
+
+`GET` e `PUT /groups/{groupId}/matches/{matchId}/publication` verificam o
+proprietário na transação. O PUT usa a revisão da prévia e a versão conhecida
+da publicação. Salvar a mesma divulgação reutiliza o link ativo. Alterar a
+divulgação ou substituir o link publica outro snapshot e revoga o anterior.
+Renovar estende a validade de um link ativo e inalterado em 7, 30 ou 90 dias.
+Um sorteio com publicação expirada pode ser publicado novamente com outro endereço.
+
+A consulta pública limita tentativas a 40 por minuto e duas consultas simultâneas
+por instância da Function, com contadores separados do tráfego autenticado.
+Esse limite complementa a busca exata por endereço. A capacidade não é uma
+cota global do Neon. O endereço encaminhável não protege conteúdo confidencial.
+
+Configure na Function `futebolapi` de cada ambiente o agendamento Neon
+`futebol-expired-draws` às 03:17 UTC (`17 3 * * *`), no caminho
+`/maintenance/expired-draws`. O POST exige o cabeçalho de invocação do
+Neon, que a plataforma remove de chamadas externas. A consulta pública bloqueia
+o acesso no instante da expiração. A rotina diária remove o snapshot e o
+endereço em texto. Revogação, substituição e exclusão removem ambos na transação.
+O hash continua reservado. As cópias do provedor seguem a retenção de backups
+do projeto. [Agendamento de Functions](https://neon.com/docs/compute/functions/triggers/schedule) · [Autenticação do trigger](https://neon.com/docs/compute/functions/triggers/overview#confirming-a-request-came-from-neon)
+
+Na observabilidade do Neon, confira as respostas 204 da rotina agendada e
+verifique somente contagens, sem nomes ou URLs. Se o agendamento falhar, use
+`select futebol_sharing.purge_expired();` no banco confirmado com a identidade
+operacional existente. A rotina afeta só snapshots já expirados.
+
 ## Encerramento do legado Supabase
 
 O usuário confirmou a exclusão definitiva do projeto Futebol Brasil

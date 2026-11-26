@@ -69,10 +69,13 @@ jobs:
 
       - name: Test
         run: pnpm test
-      - name: Test workspace resume in Chrome
+      - name: Test API
+        run: pnpm test:api
+      - name: Test browser regressions in Chrome
         run: |
           pnpm build:dev
           node scripts/test-resume-browser.mjs
+          node scripts/test-public-draw-browser.mjs
 
       - name: Test bundle and workflow security
         run: |

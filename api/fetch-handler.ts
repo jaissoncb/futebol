@@ -5,9 +5,12 @@ interface FetchDependencies {
   allowedOrigin: string
   authenticate: (authorization: string | undefined) => Promise<Principal>
   dispatch: (principal: Principal, method: string, url: URL, body: unknown) => Promise<unknown>
+  lookupPublicDraw?: (slug: string) => Promise<unknown>
+  purgeExpiredDraws?: () => Promise<void>
   now?: () => number
 }
 const MAX_BODY = 262144
+const publicDrawSlug = /^[a-z0-9][a-z0-9-]{0,39}-[23456789abcdefghijkmnpqrstuvwxyz]{6}$/
 
 export function jsonResponse(status: number, value?: unknown, headers?: Headers): Response {
   const result = new Headers(headers)
@@ -65,24 +68,48 @@ export function createFetchHandler(dependencies: FetchDependencies): (request: R
   // the entire isolate, never to user-controlled X-Forwarded-For values.
   const now = dependencies.now ?? Date.now
   let count = 0, reset = 0, active = 0
+  let publicCount = 0, publicActive = 0
   return async (request: Request): Promise<Response> => {
     const headers = new Headers()
     let admitted = false
+    let admittedPublic = false
     try {
       const origin = request.headers.get('origin')
       if (origin && origin !== dependencies.allowedOrigin) throw new HttpError(403, 'origin_denied')
       if (origin) headers.set('Access-Control-Allow-Origin', origin)
       const url = new URL(request.url)
+      const publicDraw = url.pathname === '/shared-draw'
+      if (publicDraw) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')
+      if (url.pathname === '/maintenance/expired-draws') {
+        // Neon strips client-supplied X-Neon-* headers at the Function edge.
+        if (request.method !== 'POST' || origin || url.search || !dependencies.purgeExpiredDraws
+          || !request.headers.get('X-Neon-Trigger-Invocation-Id')) throw new HttpError(404, 'not_found')
+        await dependencies.purgeExpiredDraws()
+        return jsonResponse(204, undefined, headers)
+      }
       if (url.pathname === '/__dev' || url.pathname.startsWith('/__dev/')
         || [...url.searchParams.keys()].some(key => key.startsWith('__dev')
           || ['phase', 'mode', 'transport', 'trial', 'stabilize'].includes(key))) throw new HttpError(404, 'not_found')
       if (request.method === 'OPTIONS') {
-        headers.set('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE')
-        headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+        headers.set('Access-Control-Allow-Methods', publicDraw ? 'GET' : 'GET, POST, PATCH, PUT, DELETE')
+        if (!publicDraw) headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
         return jsonResponse(204, undefined, headers)
       }
       const time = now()
-      if (reset <= time) { count = 0; reset = time + 60000 }
+      if (reset <= time) { count = 0; publicCount = 0; reset = time + 60000 }
+      if (publicDraw) {
+        if (++publicCount > 40 || publicActive >= 2) {
+          headers.set('Retry-After', '60')
+          throw new HttpError(429, 'rate_limited')
+        }
+        const [slug, ...duplicates] = url.searchParams.getAll('id')
+        if (request.method !== 'GET' || url.searchParams.size !== 1 || !slug || duplicates.length
+          || !publicDrawSlug.test(slug) || !dependencies.lookupPublicDraw) throw new HttpError(404, 'publication_unavailable')
+        publicActive++; admittedPublic = true
+        const publication = await dependencies.lookupPublicDraw(slug)
+        if (!publication) throw new HttpError(404, 'publication_unavailable')
+        return jsonResponse(200, publication, headers)
+      }
       if (++count > 120 || active >= 8) {
         headers.set('Retry-After', '60')
         throw new HttpError(429, 'rate_limited')
@@ -112,6 +139,7 @@ export function createFetchHandler(dependencies: FetchDependencies): (request: R
       return jsonResponse(503, { error: 'service_unavailable' }, headers)
     } finally {
       if (admitted) active--
+      if (admittedPublic) publicActive--
     }
   }
 }

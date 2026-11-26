@@ -153,7 +153,7 @@ describe('histórico e detalhe da Fase 7', () => {
     vi.mocked(sharing.shareSavedResult).mockResolvedValue(outcome)
     render(<MatchWorkspace client={client} group={{ ...group, role: 'member' }} players={[]} />)
     await detail(user); await user.click(screen.getByRole('button', { name: 'Compartilhar resultado' }))
-    const messages = { shared: 'Resultado compartilhado.', copied: 'Resultado copiado para a área de transferência.', cancelled: 'Compartilhamento cancelado.' }
+    const messages = { shared: 'Opções de compartilhamento abertas.', copied: 'Resultado copiado para a área de transferência.', cancelled: 'Compartilhamento cancelado.' }
     expect(await screen.findByRole('status')).toHaveTextContent(messages[outcome])
     expect(sharing.shareSavedResult).toHaveBeenCalledWith(saved)
   })
