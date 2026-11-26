@@ -1,9 +1,10 @@
-param([Parameter(Mandatory)][ValidateSet('dev','prd')][string]$Target,[switch]$Deploy)
+param([Parameter(Mandatory)][ValidateSet('dev','prd')][string]$Target,[switch]$Deploy,[switch]$Smoke)
 $ErrorActionPreference = 'Stop'
 $futebolRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $futebolRoot
 if ((Get-Location).Path -ne $futebolRoot -or (git remote get-url origin) -ne 'https://github.com/jaissoncb/futebol.git') { throw 'Checkout Futebol incorreto' }
-if ($Deploy -and $Target -ne 'dev') { throw 'Operador de escrita disponível apenas para DEV' }
+if ($Smoke -and $Target -ne 'dev') { throw 'Smoke de escrita disponível apenas para DEV' }
+if ($Deploy -and $Smoke) { throw 'Escolha uma operação' }
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -53,10 +54,13 @@ $futebolStart.FileName = (Get-Command node -CommandType Application | Select-Obj
 $futebolStart.WorkingDirectory = $futebolRoot
 $futebolStart.UseShellExecute = $false
 $futebolStart.RedirectStandardInput = $true
-$futebolStart.ArgumentList.Add($(if ($Deploy) { '.local-backup/deploy-sharing-dev.mjs' } else { 'scripts/neon-verify-access.mjs' }))
-$futebolStart.ArgumentList.Add($(if ($Deploy) { '--deploy' } else { $Target }))
+$futebolStart.ArgumentList.Add($(if ($Deploy) { ".local-backup/deploy-sharing-$Target.mjs" } elseif ($Smoke) { '.local-backup/smoke-sharing-dev-live.mjs' } else { 'scripts/neon-verify-access.mjs' }))
+$futebolStart.ArgumentList.Add($(if ($Deploy) { '--deploy' } elseif ($Smoke) { '--real' } else { $Target }))
 $futebolStart.Environment.Clear()
-foreach ($futebolName in 'SYSTEMROOT','WINDIR','TEMP','TMP') {
+if ($Deploy -and $Target -eq 'prd') {
+    $futebolStart.Environment['FUTEBOL_OPERATOR_GIT'] = (Get-Command git -CommandType Application | Select-Object -First 1).Source
+}
+foreach ($futebolName in 'SYSTEMROOT','WINDIR','TEMP','TMP','LOCALAPPDATA','ProgramFiles','ProgramFiles(x86)') {
     $futebolValue = [Environment]::GetEnvironmentVariable($futebolName)
     if ($futebolValue) { $futebolStart.Environment[$futebolName] = $futebolValue }
 }
