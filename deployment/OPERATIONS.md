@@ -89,6 +89,26 @@ executado nesta limpeza. Não alterar senhas ou configurações de Auth para com
 
 ## Implantação, manutenção e rollback
 
+### Credenciais Neon do operador Windows
+
+Use credenciais genéricas do Gerenciador de Credenciais do Windows.
+`sabara/futebol/neon/dev` corresponde exclusivamente a `futebol-dev-20261018`.
+`sabara/futebol/neon/prd` corresponde exclusivamente a `futebol-prd`.
+
+No checkout validado, execute `pwsh -NoProfile -File scripts/neon-windows-operator.ps1 -Target dev`
+e repita com `-Target prd`. O operador lê a entrada com `CredReadW` e passa
+o valor em memória pelo stdin redirecionado do processo filho. A validação
+usa apenas GETs, confirma o projeto, a branch e a Function esperados e exige
+negação de leitura do projeto e da Function do outro ambiente. Faça essa
+validação antes de usar uma credencial em implantação.
+
+Mantenha chaves fora de terminal, chat, argumentos, variáveis de ambiente,
+logs e arquivos. Para substituir uma chave, identifique primeiro seus
+consumidores, cadastre a nova chave de escopo exclusivo no identificador
+correto e valide leitura e isolamento. Confirme a migração dos consumidores
+antes de autorizar separadamente a revogação da anterior. O nome ou a data
+da última utilização no console não comprovam que uma chave está sem uso.
+
 O procedimento é [RELEASE.md](RELEASE.md). Push e pull request executam CI;
 publicação exige dispatch manual em `main` com SHA completo exato. O workflow
 não usa variáveis ou secrets Supabase. Pages recebe exclusivamente `dist/` validado.
