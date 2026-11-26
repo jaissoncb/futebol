@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { validateFutebolEnvironment } from './src/config/futebol-environment.ts'
 
 export default defineConfig(({ mode }) => {
@@ -17,10 +18,17 @@ export default defineConfig(({ mode }) => {
     base: '/',
     envDir: false,
     envPrefix: [],
-    define: frontendConfig ? { __FUTEBOL_FRONTEND_CONFIG__: JSON.stringify(frontendConfig) } : {},
+    define: frontendConfig ? {
+      __FUTEBOL_FRONTEND_CONFIG__: JSON.stringify(frontendConfig),
+      __FUTEBOL_PUBLIC_API_BASE__: JSON.stringify(frontendConfig.apiBaseUrl),
+    } : {},
     server: { watch: { ignored: ['**/dist-dev/**'] } },
     build: {
       rolldownOptions: {
+        input: publicEntry ? {
+          index: resolve(import.meta.dirname, 'index.html'),
+          sharedDraw: resolve(import.meta.dirname, 's/index.html'),
+        } : undefined,
         output: {
           // Tesseract resolves the language by its fixed basename.
           assetFileNames: ({ names }) => names.includes('por.traineddata.gz')

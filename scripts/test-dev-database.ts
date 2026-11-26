@@ -7,15 +7,18 @@ import { once } from 'node:events'
 import type { AddressInfo } from 'node:net'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { Pool } from 'pg'
-import { assertRuntimeRole, withActor } from '../api/database.ts'
-import { createDatabaseDispatch } from '../api/routes.ts'
+import { assertDatabaseBoundary, assertRuntimeRole, withActor } from '../api/database.ts'
+import { createDatabaseDispatch, createDatabaseReadiness, createPublicDrawLookup } from '../api/routes.ts'
 import { createTokenValidator } from '../api/auth.ts'
 import { createApi } from '../api/server.ts'
+import type { PublicationState } from '../src/sharing/contracts.ts'
 
 // Intentionally no environment DSN override: cannot accidentally target a remote DB.
 // Container is dedicated to this cycle, labelled, loopback-only and fictitious.
-const disposable = process.env.FUTEBOL_DISPOSABLE_DELETE_TEST === '1'
-const container = disposable ? 'futebol-delete-local-20261115' : 'futebol-dev-kinde-neon-20261017'
+const sharingFixture = process.env.FUTEBOL_DISPOSABLE_SHARING_TEST === '1'
+const disposable = sharingFixture || process.env.FUTEBOL_DISPOSABLE_DELETE_TEST === '1'
+const container = sharingFixture ? 'futebol-sharing-local-20261126'
+  : disposable ? 'futebol-delete-local-20261115' : 'futebol-dev-kinde-neon-20261017'
 const label = execFileSync('docker', ['inspect', '--format', '{{index .Config.Labels "project"}}', container], { encoding: 'utf8' }).trim()
 assert.equal(label, 'futebol-dev')
 const binding = execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).trim()
@@ -203,6 +206,7 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
       assert.equal((await fetch(`${base}/workspace`,{headers:outsiderAuth})).headers.get('cache-control'),'no-store')
     } finally {server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()))}
   })
+  const manualId = randomUUID()
   await t.test('migration 007 preserves RPC security and history and accepts only manually adjusted unequal teams', async () => {
     const rpc = () => migration.query(`select oid, proowner, prosecdef, proconfig, proacl,
       pg_get_function_identity_arguments(oid) as args, pg_get_function_result(oid) as result
@@ -214,13 +218,12 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
     const assignments = players.rows.map(({ id: player_id }, index) => ({
       player_id, team_index: index % 3 + 1, starts_as_reserve: false, assignment_source: 'draw',
     }))
-    assignments[10] = { ...assignments[10], team_index: 3, assignment_source: 'manual' }
+    assignments[11] = { ...assignments[11], team_index: 2, assignment_source: 'manual' }
     const manual = { ...payload, name: 'Manual fixture', team_count: 3, players_on_court: 5,
       teams: [{ team_index: 1, name: 'Azul' }, { team_index: 2, name: 'Vermelho' }, { team_index: 3, name: 'Verde' }],
       participants: players.rows.map(({ id: player_id }, index) => ({
         player_id, player_name_snapshot: `Manual fixture ${index + 1}`, skill_rating_snapshot: 3, is_goalkeeper_snapshot: index < 3,
       })), assignments }
-    const manualId = randomUUID()
     const save = (value: typeof manual, id = randomUUID(), actor = owner) =>
       as(actor, c => c.query<{id:string}>('select public.save_match_draw($1,$2::jsonb) as id', [id, JSON.stringify(value)]))
     await rejected(save(manual, manualId), '22023')
@@ -239,7 +242,130 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
     await rejected(save({ ...manual, name: 'Different' }, manualId), '22023')
     const sizes = await as(owner, c => c.query(`select t.team_index, count(*)::int as size from public.team_assignments a
       join public.teams t on t.id=a.team_id where a.match_id=$1 group by t.team_index order by t.team_index`, [manualId]))
-    assert.deepEqual(sizes.rows, [{ team_index: 1, size: 5 }, { team_index: 2, size: 3 }, { team_index: 3, size: 5 }])
+    assert.deepEqual(sizes.rows, [{ team_index: 1, size: 5 }, { team_index: 2, size: 5 }, { team_index: 3, size: 3 }])
+  })
+  let deletedWithGroup = ''
+  await t.test('008 owner authorization, private projection, collisions, retries, expiration, revocation and match deletion', async () => {
+    await migration.query(await readFile(new URL('../database/008_public_draw_sharing.sql', import.meta.url), 'utf8'))
+    await assertRuntimeRole(runtime)
+    await assertDatabaseBoundary(runtime)
+    await rejected(runtime.query('select * from futebol_sharing.publications'), '42501')
+    await rejected(runtime.query('select futebol_sharing.snapshot_for(null,null,null)'), '42501')
+    await rejected(runtime.query("select futebol_sharing.manage(null,null,'status',null,null,null,null)"), '42501')
+
+    const dispatch = createDatabaseDispatch(runtime)
+    const lookup = createPublicDrawLookup(runtime, createDatabaseReadiness(runtime))
+    const call = (actor: typeof owner, method: string, path: string, body?: unknown) =>
+      dispatch(actor, method, new URL(path, 'http://localhost:8787'), body)
+    const path = `/groups/${groupId}/matches/${manualId}/publication`
+    const get = async (match = manualId) =>
+      await call(owner, 'GET', `/groups/${groupId}/matches/${match}/publication`) as PublicationState
+    const set = async (state: PublicationState, action: string,
+      options = { groupName: false, matchDate: false, goalkeepers: false }, days = 30, match = manualId) =>
+      await call(owner, 'PUT', `/groups/${groupId}/matches/${match}/publication`,
+        { action, options, days, version: state.version, revision: state.revision }) as PublicationState
+
+    await as(owner, c => c.query("update public.groups set name='Futebol de Quínta' where id=$1", [groupId]))
+    const initial = await get()
+    assert.equal(initial.status, 'private'); assert.equal(initial.publication, null)
+    await as(owner, c => c.query("update public.group_members set role='admin' where group_id=$1 and user_id=$2", [groupId, adminId!]))
+    await migration.query('update private.app_users set disabled_at=null where id=$1', [memberId!])
+    for (const actor of [admin, member, outsider]) {
+      await assert.rejects(call(actor, 'GET', path), /forbidden/)
+      await assert.rejects(call(actor, 'PUT', path, { action: 'publish', options: { groupName: true, matchDate: true, goalkeepers: true },
+        days: 7, version: initial.version, revision: initial.revision }), /forbidden/)
+    }
+    const anotherGroup = await call(outsider, 'POST', '/groups', { name: 'Grupo de isolamento', sport: 'futsal', defaultPlayersOnCourt: 5 }) as { id: string }
+    await assert.rejects(call(outsider, 'GET', `/groups/${anotherGroup.id}/matches/${manualId}/publication`), /unavailable/)
+    await as(outsider, c => c.query('delete from public.groups where id=$1', [anotherGroup.id]))
+
+    const simultaneous = await Promise.all(Array.from({ length: 5 }, () => set(initial, 'publish')))
+    const first = simultaneous[0]
+    assert.ok(first.publication)
+    const slug = first.publication.slug
+    assert.match(slug, /^sorteio-[23456789abcdefghijkmnpqrstuvwxyz]{6}$/)
+    assert.ok(simultaneous.every(result => result.publication?.slug === slug))
+    const plain = first.publication.snapshot
+    assert.deepEqual(plain.teams.map(team => team.players.length), [5, 5, 3])
+    assert.deepEqual(Object.keys(plain), ['teams'])
+    assert.ok(plain.teams.every(team => team.players.every(player => Object.keys(player).sort().join() === 'name,reserve')))
+    assert.deepEqual(await lookup(slug), { snapshot: plain, expiresAt: first.publication.expiresAt })
+    assert.equal(await lookup('sorteio-222222' === slug ? 'sorteio-333333' : 'sorteio-222222'), null)
+
+    const flags = { groupName: true, matchDate: true, goalkeepers: true }
+    await as(owner, c => c.query("update public.groups set name='contato@example.test' where id=$1", [groupId]))
+    await assert.rejects(set(await get(), 'publish', flags), /contact_in_public_names/)
+    await as(owner, c => c.query("update public.groups set name='Futebol de Quínta' where id=$1", [groupId]))
+    const contactPlayer = await migration.query<{ player_id: string; player_nickname_snapshot: string | null }>(
+      'select player_id, player_nickname_snapshot from public.match_players where match_id=$1 limit 1', [manualId])
+    const player = contactPlayer.rows[0]
+    await migration.query('update public.match_players set player_nickname_snapshot=$1 where match_id=$2 and player_id=$3',
+      ['(11) 99999-8888', manualId, player.player_id])
+    await assert.rejects(set(await get(), 'publish', flags), /contact_in_public_names/)
+    await migration.query('update public.match_players set player_nickname_snapshot=$1 where match_id=$2 and player_id=$3',
+      [player.player_nickname_snapshot, manualId, player.player_id])
+    assert.deepEqual(await lookup(slug), { snapshot: plain, expiresAt: first.publication.expiresAt })
+
+    // Force the generator's first two candidates to use an already reserved address.
+    await migration.query(`begin; set local role futebol_owner;
+      create sequence futebol_sharing.fixture_suffix;
+      alter function futebol_sharing.new_slug(text) rename to generated_slug;
+      create function futebol_sharing.new_slug(text) returns text language sql volatile as $fixture$
+      select case when nextval('futebol_sharing.fixture_suffix') <= 2
+        then '${slug}' else futebol_sharing.generated_slug($1) end $fixture$;
+      revoke all on function futebol_sharing.new_slug(text) from public; commit`)
+    let second = await set(first, 'publish', flags, 7)
+    await migration.query(`drop function futebol_sharing.new_slug(text);
+      alter function futebol_sharing.generated_slug(text) rename to new_slug;
+      drop sequence futebol_sharing.fixture_suffix`)
+    const friendly = second.publication?.slug ?? ''
+    assert.match(friendly, /^futebol-de-quinta-/)
+    assert.equal(await lookup(slug), null)
+    assert.equal(second.publication?.snapshot.groupName, 'Futebol de Quínta')
+    assert.equal(second.publication?.snapshot.matchDate, '2026-10-17')
+    assert.equal(second.publication?.snapshot.teams.flatMap(team => team.players).filter(player => player.goalkeeper).length, 3)
+
+    await as(owner, c => c.query("update public.groups set name='Novo nome' where id=$1", [groupId]))
+    second = await get()
+    assert.equal(second.changed, false)
+    assert.equal((await set(second, 'publish', flags)).publication?.slug, friendly)
+    assert.equal(second.publication?.snapshot.groupName, 'Futebol de Quínta')
+    const renewed = await set(second, 'renew', flags, 7)
+    assert.equal(renewed.publication?.slug, friendly)
+    assert.ok(Date.parse(renewed.publication.expiresAt) > Date.parse(second.publication.expiresAt))
+    await assert.rejects(set(second, 'renew', flags, 7), /conflict/)
+
+    await migration.query("update public.match_players set player_nickname_snapshot='Correção' where match_id=$1 and player_id=(select player_id from public.match_players where match_id=$1 limit 1)", [manualId])
+    const changed = await get()
+    assert.equal(changed.changed, true)
+    assert.deepEqual(await lookup(friendly), { snapshot: renewed.publication.snapshot, expiresAt: renewed.publication.expiresAt })
+    const corrected = await set(changed, 'publish', flags)
+    const correctedSlug = corrected.publication!.slug
+    assert.match(correctedSlug, /^novo-nome-/)
+    assert.equal(await lookup(friendly), null)
+    const replaced = await set(corrected, 'replace', flags)
+    assert.notEqual(replaced.publication?.slug, correctedSlug)
+    assert.equal(await lookup(correctedSlug), null)
+    await assert.rejects(set(corrected, 'replace', flags), /conflict/)
+    const revoked = await set(replaced, 'revoke', flags)
+    assert.equal(revoked.status, 'revoked')
+    assert.equal(await lookup(replaced.publication!.slug), null)
+    assert.equal((await get()).preview.teams.flatMap(team => team.players).length, 13)
+
+    const expires = await set(revoked, 'publish', flags, 90)
+    await migration.query("update futebol_sharing.publications set expires_at=now()-interval '1 second' where slug=$1", [expires.publication!.slug])
+    assert.equal(await lookup(expires.publication!.slug), null)
+    assert.equal((await get()).status, 'expired')
+    assert.equal((await runtime.query<{ removed: number }>('select futebol_sharing.purge_expired() as removed')).rows[0].removed, 1)
+    assert.equal((await migration.query('select 1 from futebol_sharing.publications where snapshot is not null')).rowCount, 0)
+
+    const live = await set(await get(), 'publish', flags)
+    await migration.query('delete from public.matches where id=$1', [manualId])
+    assert.equal(await lookup(live.publication!.slug), null)
+    assert.equal((await migration.query(`select 1 from futebol_sharing.publications
+      where address_hash=sha256(convert_to($1,'UTF8')) and match_id is null and snapshot is null and slug is null`,
+      [live.publication!.slug])).rowCount, 1)
+    deletedWithGroup = (await set(await get(matchId), 'publish', flags, 30, matchId)).publication!.slug
   })
   await t.test('owner-only deletion is atomic across the complete graph and concurrent writes', async () => {
     const dispatch = createDatabaseDispatch(runtime)
@@ -280,6 +406,8 @@ void test('isolated local PostgreSQL: identity, final runtime ACL/RLS, domain an
     }
     if (results[2].status === 'rejected') assert.ok(assertStatus(404)(results[2].reason))
     for (const table of graph) assert.equal((await migration.query(`select 1 from public.${table} where group_id=$1`, [groupId])).rowCount, 0)
+    assert.ok(deletedWithGroup)
+    assert.equal(await createPublicDrawLookup(runtime, createDatabaseReadiness(runtime))(deletedWithGroup), null)
     await assert.rejects(call(admin, 'PUT', `/matches/${randomUUID()}/draw`, payload), assertStatus(403))
     await assert.rejects(call(owner, 'DELETE', path), assertStatus(404))
     assert.deepEqual((await migration.query('select id from public.groups')).rows, [{ id: other.id }])

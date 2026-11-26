@@ -6,10 +6,12 @@ import type { Tables } from '../lib/database.types'
 import { HISTORY_PAGE_SIZE, loadMatchHistory, loadSavedMatch, type SavedMatch } from './match-service'
 import { copySavedResult, formatMatchDate, shareSavedResult, whatsAppResultUrl } from './share-result'
 import { TeamCard } from '../draw/TeamCard'
+import { DrawPublication } from '../sharing/DrawPublication'
+import '../sharing/sharing.css'
 
 export function MatchHistory({ client, group, selectedId, onSelect }: { client: FutebolDataClient | null; group: GroupWithRole; selectedId: string | null; onSelect: (id: string | null) => void }) {
   const [revision, setRevision] = useState(0)
-  return selectedId ? <MatchDetail key={selectedId} client={client} groupId={group.id} id={selectedId} onBack={() => { onSelect(null); setRevision((n) => n + 1) }} />
+  return selectedId ? <MatchDetail key={selectedId} client={client} groupId={group.id} owner={group.role === 'owner'} id={selectedId} onBack={() => { onSelect(null); setRevision((n) => n + 1) }} />
     : <HistoryList key={`${group.id}:${revision}`} client={client} groupId={group.id} onSelect={onSelect} />
 }
 
@@ -49,7 +51,7 @@ function HistoryList({ client, groupId, onSelect }: { client: FutebolDataClient 
   </div>
 }
 
-function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClient | null; groupId: string; id: string; onBack: () => void }) {
+function MatchDetail({ client, groupId, owner, id, onBack }: { client: FutebolDataClient | null; groupId: string; owner: boolean; id: string; onBack: () => void }) {
   const detail = useRef<HTMLElement>(null)
   const [saved, setSaved] = useState<SavedMatch | null>(null)
   const [loading, setLoading] = useState(true)
@@ -79,7 +81,7 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
     shareLock.current = true; setSharing(true); setShareNotice(null)
     try {
       const outcome = await shareSavedResult(saved)
-      setShareNotice(outcome === 'shared' ? 'Resultado compartilhado.' : outcome === 'copied' ? 'Resultado copiado para a área de transferência.' : 'Compartilhamento cancelado.')
+      setShareNotice(outcome === 'shared' ? 'Opções de compartilhamento abertas.' : outcome === 'copied' ? 'Resultado copiado para a área de transferência.' : 'Compartilhamento cancelado.')
     } catch { setShareNotice('Não foi possível compartilhar ou copiar. Tente novamente.') }
     finally { shareLock.current = false; setSharing(false) }
   }
@@ -104,6 +106,7 @@ function MatchDetail({ client, groupId, id, onBack }: { client: FutebolDataClien
       })}</ul>{!saved.assignments.some((a) => a.team_id === team.id && a.starts_as_reserve === reserve) ? <p>Nenhum</p> : null}</section>)}</TeamCard>)}</div>
       <details className="saved-draw-data"><summary>Informações dos sorteios ({saved.runs.length})</summary><ol>{saved.runs.map((run) => <li key={run.id}>Sorteio {run.run_number}{run.accepted ? ' · Aceito (sorteio-base)' : ' · Não aceito'}<br />Código do sorteio: <code>{run.seed}</code><br />Versão: <code>{run.algorithm_version}</code> · Diferença entre médias: {Number(run.balance_score).toFixed(3)}</li>)}</ol></details>
       <p className="game-flow-note">A escalação acima é o resultado final salvo, incluindo ajustes manuais. O código identifica o sorteio-base.</p>
+      {owner && client && <DrawPublication client={client} groupId={groupId} matchId={id} />}
       {saved.runs.some(run => usesHistory(run.algorithm_version)) && <p className="game-flow-note">Para reproduzir um sorteio com histórico, é necessário o mesmo histórico usado na ocasião. A partida salva conserva a escalação final.</p>}
       <div className="game-flow-actions">
         <button className="quiet-action" disabled={sharing || copying} onClick={() => void copy()}>{copying ? 'Copiando…' : 'Copiar resultado'}</button>

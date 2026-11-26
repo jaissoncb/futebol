@@ -3,6 +3,7 @@ import type { GroupInput, GroupWorkspaceData, PlayerInput } from '../../groups/g
 import type { Tables } from '../database.types'
 import type { SaveDrawPayload } from '../../matches/draw-payload'
 import { validateSavedMatch, type SavedMatch } from '../../matches/match-service'
+import type { PublicationState, PublicationUpdate } from '../../sharing/contracts'
 
 function id(value: string) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new ApiError(400)
@@ -49,6 +50,12 @@ export function createFutebolApiServices(baseUrl: string, getAccessToken: () => 
     async savedMatch(groupId: string, matchId: string): Promise<SavedMatch> {
       const saved = await client.request<SavedMatch>(`/groups/${id(groupId)}/matches/${id(matchId)}`)
       return validateSavedMatch(saved)
+    },
+    drawPublication(groupId: string, matchId: string) {
+      return client.request<PublicationState>(`/groups/${id(groupId)}/matches/${id(matchId)}/publication`)
+    },
+    updateDrawPublication(groupId: string, matchId: string, input: PublicationUpdate) {
+      return client.request<PublicationState>(`/groups/${id(groupId)}/matches/${id(matchId)}/publication`, 'PUT', input)
     },
     async saveDraw(matchId: string, payload: SaveDrawPayload) {
       const response = await client.request<{ id: string }>(`/matches/${id(matchId)}/draw`, 'PUT', payload)

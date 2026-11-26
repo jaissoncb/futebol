@@ -87,6 +87,17 @@ compartilhar e Abrir no WhatsApp usam os snapshots da escalação salva, incluin
 titulares, reservas e goleiros. No WhatsApp ainda é necessário escolher a
 conversa e confirmar o envio. Cancelar o compartilhamento nativo não copia texto.
 
+Depois de salvar a partida, o proprietário pode abrir **Compartilhar sorteio**
+no detalhe do histórico e revisar a prévia. Ele escolhe se divulga o nome do
+grupo, a data da partida e os goleiros. **Publicar e compartilhar** gera um
+endereço acessível a qualquer pessoa com o link. O endereço vale por 30 dias por
+padrão. Também há opções de 7 e 90 dias, renovação e revogação.
+
+O link abre a escalação completa sem login. A mensagem e o PNG usam os nomes
+de exibição ou apelidos da publicação. Compartilhe apenas nomes que possam ser
+divulgados. A revogação impede novas consultas ao site. Mensagens, imagens
+e cópias recebidas podem continuar circulando.
+
 ## Configuração e build
 
 - `deployment/frontend-dev.json`: metadados públicos exatos de DEV; sem `.env`.

@@ -14,6 +14,15 @@ times não vazios, titulares, reservas, goleiros e participantes únicos. A
 marcação `manual` do cliente descreve a atribuição. O RPC continua verificando
 a autorização da mesma forma. Confira corpo, owner e grants antes e depois.
 
+`008_public_draw_sharing.sql` cria o schema `futebol_sharing` e uma tabela
+com RLS e FK composta para o resultado salvo. A Function recebe somente
+`USAGE` no schema e `EXECUTE` nas rotinas de gerenciamento, consulta por
+endereço e limpeza de expirados. O runtime não lê a tabela diretamente.
+O snapshot é montado por campos explícitos a partir do resultado persistido.
+Na revogação, substituição ou exclusão do sorteio ou grupo, o snapshot e o
+endereço em texto são apagados na transação. O hash do endereço impede
+reutilização. A rotina de retenção fica em [OPERATIONS.md](../deployment/OPERATIONS.md).
+
 `futebol_owner`: NOLOGIN, sem superuser/BYPASSRLS/CREATEROLE/CREATEDB. Dono de schema/tabelas e das funções privilegiadas delimitadas. RLS está habilitada inclusive nas tabelas privadas; FORCE RLS não é usado para esse owner, porque bootstrap e helpers privilegiados precisam superar RLS para resolver identidade/evitar recursão. Nenhum login runtime pode assumir esse owner.
 
 `futebol_runtime`: NOLOGIN, sem DDL, ownership, BYPASSRLS ou capacidade administrativa. Um login de runtime separado recebe somente essa role. Grants explícitos de tabelas/colunas e funções; nenhum EXECUTE PUBLIC; grafo de partida somente SELECT e `save_match_draw`. Conexão runtime é segredo do backend. Migration usa outra identidade, jamais distribuída ao runtime/browser. Compatibilidade administrativa Neon validada no novo DEV em 18/10/2026.

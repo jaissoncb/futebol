@@ -89,6 +89,26 @@ executado nesta limpeza. Não alterar senhas ou configurações de Auth para com
 
 ## Implantação, manutenção e rollback
 
+### Credenciais Neon do operador Windows
+
+Use credenciais genéricas do Gerenciador de Credenciais do Windows.
+`sabara/futebol/neon/dev` corresponde exclusivamente a `futebol-dev-20261018`.
+`sabara/futebol/neon/prd` corresponde exclusivamente a `futebol-prd`.
+
+No checkout validado, execute `pwsh -NoProfile -File scripts/neon-windows-operator.ps1 -Target dev`
+e repita com `-Target prd`. O operador lê a entrada com `CredReadW` e passa
+o valor em memória pelo stdin redirecionado do processo filho. A validação
+usa apenas GETs, confirma o projeto, a branch e a Function esperados e exige
+negação de leitura do projeto e da Function do outro ambiente. Faça essa
+validação antes de usar uma credencial em implantação.
+
+Mantenha chaves fora de terminal, chat, argumentos, variáveis de ambiente,
+logs e arquivos. Para substituir uma chave, identifique primeiro seus
+consumidores, cadastre a nova chave de escopo exclusivo no identificador
+correto e valide leitura e isolamento. Confirme a migração dos consumidores
+antes de autorizar separadamente a revogação da anterior. O nome ou a data
+da última utilização no console não comprovam que uma chave está sem uso.
+
 O procedimento é [RELEASE.md](RELEASE.md). Push e pull request executam CI;
 publicação exige dispatch manual em `main` com SHA completo exato. O workflow
 não usa variáveis ou secrets Supabase. Pages recebe exclusivamente `dist/` validado.
@@ -109,6 +129,42 @@ Rollback usa uma versão aprovada da arquitetura Kinde/Neon compatível com o ba
 existente. Não restaurar o Supabase excluído. Frontend, Function e schema são
 versionados separadamente; rollback de frontend não faz rollback de dados.
 Problemas de API/banco não autorizam executar inicializadores nem trocar secrets.
+
+## Compartilhamento público de sorteios
+
+O GitHub Pages serve `/s/index.html` em `/s/?id=<endereço>`. A página
+consulta `GET /shared-draw?id=<endereço>` na Function do mesmo ambiente,
+sem sessão, cookies ou credenciais Kinde. A API recusa consultas em lote
+e usa a mesma resposta 404 para endereço inválido, expirado ou revogado.
+Respostas usam `no-store`, `no-referrer` e `X-Robots-Tag`. O service worker
+pode guardar a página estática e seus assets. A escalação é consultada na rede.
+Nenhuma chamada precisa registrar o endereço ou nomes da escalação.
+
+`GET` e `PUT /groups/{groupId}/matches/{matchId}/publication` verificam o
+proprietário na transação. O PUT usa a revisão da prévia e a versão conhecida
+da publicação. Salvar a mesma divulgação reutiliza o link ativo. Alterar a
+divulgação ou substituir o link publica outro snapshot e revoga o anterior.
+Renovar estende a validade de um link ativo e inalterado em 7, 30 ou 90 dias.
+Um sorteio com publicação expirada pode ser publicado novamente com outro endereço.
+
+A consulta pública limita tentativas a 40 por minuto e duas consultas simultâneas
+por instância da Function, com contadores separados do tráfego autenticado.
+Esse limite complementa a busca exata por endereço. A capacidade não é uma
+cota global do Neon. O endereço encaminhável não protege conteúdo confidencial.
+
+Configure na Function `futebolapi` de cada ambiente o agendamento Neon
+`futebol-expired-draws` às 03:17 UTC (`17 3 * * *`), no caminho
+`/maintenance/expired-draws`. O POST exige o cabeçalho de invocação do
+Neon, que a plataforma remove de chamadas externas. A consulta pública bloqueia
+o acesso no instante da expiração. A rotina diária remove o snapshot e o
+endereço em texto. Revogação, substituição e exclusão removem ambos na transação.
+O hash continua reservado. As cópias do provedor seguem a retenção de backups
+do projeto. [Agendamento de Functions](https://neon.com/docs/compute/functions/triggers/schedule) · [Autenticação do trigger](https://neon.com/docs/compute/functions/triggers/overview#confirming-a-request-came-from-neon)
+
+Na observabilidade do Neon, confira as respostas 204 da rotina agendada e
+verifique somente contagens, sem nomes ou URLs. Se o agendamento falhar, use
+`select futebol_sharing.purge_expired();` no banco confirmado com a identidade
+operacional existente. A rotina afeta só snapshots já expirados.
 
 ## Encerramento do legado Supabase
 

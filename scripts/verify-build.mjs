@@ -15,6 +15,9 @@ export async function verifyBuild({ directory = dist, mode = 'production' } = {}
 
   const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
   const index = await readFile(indexPath, 'utf8')
+  const sharePage = await readFile(resolve(directory, 's/index.html'), 'utf8')
+  if (!sharePage.includes('content="noindex, nofollow, noarchive"')
+    || !sharePage.includes('name="referrer" content="no-referrer"')) throw new Error('Página pública sem proteção contra indexação ou referrer.')
 
   if (manifest.scope !== '/' || manifest.id !== '/' || manifest.start_url !== '/#/') {
     throw new Error('PWA id/scope/start_url fora da raiz.')
@@ -30,7 +33,9 @@ export async function verifyBuild({ directory = dist, mode = 'production' } = {}
     if (relative(directory, path).startsWith('..')) throw new Error('Referência HTML fora do artefato.')
     return path
   }
-  for (const match of index.matchAll(/(?:src|href)="([^"]+)"/g)) await access(assetPath(match[1]))
+  for (const html of [index, sharePage]) {
+    for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) await access(assetPath(match[1]))
+  }
   for (const icon of manifest.icons ?? []) await access(assetPath(icon.src))
   const entryUrl = index.match(/<script\b[^>]*type="module"[^>]*src="([^"]+)"/)?.[1]
   if (!entryUrl?.startsWith('/assets/')) throw new Error('Entrada JS ausente ou fora de /assets/.')
@@ -65,6 +70,12 @@ export async function verifyBuild({ directory = dist, mode = 'production' } = {}
   const entryLiterals = literalValues(await readFile(entryPath, 'utf8'))
   for (const value of [environment.apiBaseUrl, environment.appOrigin, ...Object.values(environment.identity)]) {
     if (!entryLiterals.includes(value)) throw new Error('Configuração pública Futebol esperada não foi emitida na entrada JS.')
+  }
+  const shareEntry = sharePage.match(/<script\b[^>]*type="module"[^>]*src="([^"]+)"/)?.[1]
+  if (!shareEntry?.startsWith('/assets/') || shareEntry === entryUrl) throw new Error('Entrada pública independente ausente.')
+  const shareLiterals = literalValues(await readFile(assetPath(shareEntry), 'utf8'))
+  if (!shareLiterals.includes(environment.apiBaseUrl) || shareLiterals.includes(environment.identity.domain)) {
+    throw new Error('A consulta pública deve usar a API do ambiente e iniciar sem identidade.')
   }
   const worker = await readFile(serviceWorkerPath, 'utf8')
   if (!worker.includes('/index.html') || !worker.includes('allowlist:[/^\\/$/]')

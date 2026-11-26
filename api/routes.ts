@@ -5,16 +5,31 @@ import { HttpError } from './http-error.ts'
 
 // One readiness check per pool/isolate. A failed check never enables dispatch;
 // a subsequent request may retry after a transient connection failure.
-export function createRestrictedDatabaseDispatch(pool: Pool) {
-  const dispatch = createDatabaseDispatch(pool)
+export function createDatabaseReadiness(pool: Pool) {
   let readiness: Promise<void> | undefined
-  return async (principal: Principal, method: string, url: URL, body: unknown) => {
+  return () => {
     readiness ??= assertRuntimeRole(pool).then(() => assertDatabaseBoundary(pool)).catch((error: unknown) => {
       readiness = undefined
       throw error
     })
-    await readiness
+    return readiness
+  }
+}
+
+export function createRestrictedDatabaseDispatch(pool: Pool, ready = createDatabaseReadiness(pool)) {
+  const dispatch = createDatabaseDispatch(pool)
+  return async (principal: Principal, method: string, url: URL, body: unknown) => {
+    await ready()
     return dispatch(principal, method, url, body)
+  }
+}
+
+export function createPublicDrawLookup(pool: Pool, ready: () => Promise<void>) {
+  return async (slug: string) => {
+    await ready()
+    const { rows } = await pool.query<{ publication: unknown }>(
+      'select futebol_sharing.lookup($1) as publication', [slug])
+    return rows[0]?.publication ?? null
   }
 }
 
@@ -44,6 +59,17 @@ function playerBody(body: unknown) {
       || !['goalkeeper','defense','midfield','attack','any'].includes(p.preferredPosition)))) throw new HttpError(400, 'invalid_player')
   return [p.name.trim(), typeof p.nickname === 'string' ? p.nickname.trim() || null : null,
     p.skillRating, p.isGoalkeeper, p.preferredPosition, p.active]
+}
+const sha256 = /^[a-f0-9]{64}$/
+function publicationBody(body: unknown) {
+  const input = object(body, ['action', 'version', 'revision', 'options', 'days'])
+  if (typeof input.action !== 'string' || !['publish', 'renew', 'replace', 'revoke'].includes(input.action)
+    || (input.version !== null && (typeof input.version !== 'string' || !sha256.test(input.version)))
+    || typeof input.revision !== 'string' || !sha256.test(input.revision)
+    || typeof input.days !== 'number' || ![7, 30, 90].includes(input.days)) throw new HttpError(400, 'invalid_publication')
+  const options = object(input.options, ['groupName', 'matchDate', 'goalkeepers'])
+  if (Object.values(options).some(value => typeof value !== 'boolean')) throw new HttpError(400, 'invalid_publication')
+  return [input.action, JSON.stringify(options), input.days, input.version, input.revision]
 }
 async function changed(client: PoolClient, query: string, values: unknown[]) {
   const result = await client.query(query, values)
@@ -114,6 +140,14 @@ export function createDatabaseDispatch(pool: Pool) {
           if (!saved.rowCount) throw new HttpError(404, 'unavailable')
           return saved.rows[0].result
         }
+        match = /^\/groups\/([^/]+)\/matches\/([^/]+)\/publication$/.exec(path)
+        if (match && ['GET', 'PUT'].includes(method)) {
+          const input = method === 'PUT' ? publicationBody(body) : ['status', null, null, null, null]
+          const result = await client.query<{ publication: unknown }>(
+            'select futebol_sharing.manage($1,$2,$3,$4::jsonb,$5,$6,$7) as publication',
+            [id(match[1]), id(match[2]), ...input])
+          return result.rows[0].publication
+        }
         match = /^\/matches\/([^/]+)\/draw$/.exec(path)
         if (match && method === 'PUT') {
           const result = await client.query('select public.save_match_draw($1,$2::jsonb) as id', [id(match[1]), JSON.stringify(body)])
@@ -123,6 +157,8 @@ export function createDatabaseDispatch(pool: Pool) {
       })
     } catch (error) {
       const code = (error as { code?: string }).code
+      if (code === 'P0804') throw new HttpError(404, 'unavailable')
+      if (code === 'P0805') throw new HttpError(422, 'contact_in_public_names')
       if (code === '42501') throw new HttpError(403, 'forbidden')
       if (code === '40001' || code === '23505' || (deletedGroupId && ['40P01', '55P03'].includes(code ?? ''))) throw new HttpError(409, 'conflict')
       if (!deletedGroupId && (code?.startsWith('22') || code?.startsWith('23'))) throw new HttpError(400, 'invalid_input')
